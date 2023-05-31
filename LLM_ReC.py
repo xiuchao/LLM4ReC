@@ -586,6 +586,7 @@ if __name__ == "__main__":
     if True:
         # argparse
         parser = argparse.ArgumentParser("LAA Demo", add_help=True)
+        parser.add_argument("--openai_key", type=str,required=True, help="openai key")
         parser.add_argument("--input_image", type=str, required=True, help="path to image file")
         parser.add_argument("--request", type=str, default="give me something", required=True, help="human request")
         parser.add_argument("--output_dir", "-o", type=str, default="outputs", required=True, help="output directory")
@@ -606,7 +607,6 @@ if __name__ == "__main__":
         device = cfg.device
         os.makedirs(output_dir,exist_ok=True)
 
-        openai_key = "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"
         openai.api_key = openai_key
         openai_proxy = None
         if openai_proxy:
