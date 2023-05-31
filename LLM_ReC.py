@@ -607,7 +607,7 @@ if __name__ == "__main__":
         device = cfg.device
         os.makedirs(output_dir,exist_ok=True)
 
-        openai.api_key = openai_key
+        openai.api_key = cfg.openai_key
         openai_proxy = None
         if openai_proxy:
             openai.proxy = {"http": openai_proxy, "https": openai_proxy}
