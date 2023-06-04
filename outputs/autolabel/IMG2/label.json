@@ -1,9 +1,0 @@
-{"caption": "There are two pots on the table.",
- "mask": [
-        {"value": 0, "label": "background"}, 
-        {"value": 1, "label": "pot", "logit": 0.47, "box": [411.94, 1595.08, 2199.41, 2718.23]},
-        {"value": 2, "label": "pot", "logit": 0.27, "box": [1436.16, 189.56, 2645.56, 1308.92]}
-        ]
-}
-
-

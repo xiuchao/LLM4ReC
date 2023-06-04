@@ -77,9 +77,9 @@ class PlotUtils:
         plt.axis('off')
         plt.savefig(os.path.join(output_dir, "raw_box_mask.jpg"),  bbox_inches="tight", dpi=300, pad_inches=0.0)
     
-def draw_candidate_boxes(image_pil, crops_base_list, output_dir, stepstr= 'candidates', save=False):
-    assert stepstr in ['candidates', 'self', 'related', 'ref'], "stepstr must be one of ['self', 'related', 'ref']"
-    
+def draw_candidate_boxes(image_path, crops_base_list, output_dir, stepstr= 'targets', save=False):
+    #assert stepstr in ['candidates', 'self', 'related', 'ref'], "stepstr must be one of ['self', 'related', 'ref']"
+    image_pil = Image.open(image_path).convert("RGB") 
     H, W = image_pil.size
     boxes =  [k["box"]  for k in crops_base_list]
     labels = [k["name"] for k in crops_base_list]
@@ -116,20 +116,18 @@ def draw_candidate_boxes(image_pil, crops_base_list, output_dir, stepstr= 'candi
         image_pil.save(os.path.join(output_dir, stepstr+".jpg")) 
     return image_pil
 
-def draw_overlay_caption(image_path, request, stepstr= 'self', withcaption=False):
+def draw_overlay_caption(image_path, request, withcaption=False):
     plt.figure(figsize=(10, 10))
-    plt.imshow(Image.open(os.path.join(output_dir, stepstr+".jpg")))
+    plt.imshow(Image.open(os.path.join(image_path, "gptref.jpg")))
     plt.title(request)
     plt.axis('off')
-    plt.savefig(os.path.join(output_dir, stepstr+"_title.jpg"),  bbox_inches="tight", dpi=300, pad_inches=0.0)
+    plt.savefig(os.path.join(image_path, "gptref_title.jpg"),  bbox_inches="tight", dpi=300, pad_inches=0.0)
     return True
-
 
 class GroundedDetection:
     # GroundingDino
-    def __init__(self, device):
-        print(f"Initializing GroundingDINO to {device}")
-        self.device = device
+    def __init__(self, cfg):
+        print(f"Initializing GroundingDINO to {cfg.device}")
         self.model = build_model(SLConfig.fromfile('GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py'))
         checkpoint = torch.load('groundingdino_swint_ogc.pth', map_location="cpu")
         self.model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
@@ -138,14 +136,15 @@ class GroundedDetection:
                             T.RandomResize([800], max_size=1333),
                             T.ToTensor(),
                             T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+        self.cfg = cfg
 
-    def inference(image_path, caption, box_threshold, text_threshold,device="cpu"):
-        self.model = self.model.to(device)
+    def inference(self, image_path, caption, box_threshold, text_threshold, iou_threshold):
+        self.model = self.model.to(self.cfg.device)
 
         # input: image, caption
         image_pil = Image.open(image_path).convert("RGB")  # load image
-        image, _ = transform(image_pil, None) 
-        image = image.to(device)
+        image, _ = self.processor(image_pil, None) 
+        image = image.to(self.cfg.device)
 
         caption = caption.lower()
         caption = caption.strip()
@@ -185,7 +184,7 @@ class GroundedDetection:
         boxes_filt = boxes_filt.cpu()  # norm2raw: xywh2xyxy
 
         print(f"Before NMS: {boxes_filt.shape[0]} boxes")
-        nms_idx = torchvision.ops.nms(boxes_filt, scores, iou_threshold).numpy().tolist() 
+        nms_idx = torchvision.ops.nms(boxes_filt, torch.tensor(scores), iou_threshold).numpy().tolist() 
         boxes_filt = boxes_filt[nms_idx]
         pred_phrases = [pred_phrases[idx] for idx in nms_idx]
         print(f"After NMS:  {boxes_filt.shape[0]} boxes")
@@ -194,8 +193,9 @@ class GroundedDetection:
 
 class DetPromptedSegmentation:
     # SAM
-    def __init__(self, device):
+    def __init__(self, cfg):
         self.predictor = SamPredictor(build_sam(checkpoint='sam_vit_h_4b8939.pth'))
+        self.cfg = cfg
 
     @staticmethod
     def save_mask_json(output_dir, mask_list, box_list, label_list, caption=''):
@@ -231,7 +231,7 @@ class DetPromptedSegmentation:
             json.dump(json_data, f)
         return json_data
 
-    def inference(self, image_path, prompt_boxes, save_json=False, output_dir=None):
+    def inference(self, image_path, prompt_boxes, save_json=False):
         image = cv2.imread(image_path)   #(3024, 4032, 3)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) 
         self.predictor.set_image(image)
@@ -245,42 +245,43 @@ class DetPromptedSegmentation:
         
         # plot_raw_boxes_masks(image, boxes_filt, masks, pred_phrases)
         if save_json == True:
-            DetPromptedSegmentation.save_mask_json(output_dir, masks, prompt_boxes, pred_phrases)
+            DetPromptedSegmentation.save_mask_json(self.cfg.output_dir, masks, prompt_boxes, pred_phrases)
 
         return masks
 
 class ImageCropsBaseAttributesMatching:
     # CLIP 
-    def __init__(self):
-        self.model, self.preprocess = clip.load('ViT-B/32', device)
-        self.base_dict = self.user_defined_base_attributes()
-        self.text_base_dict = self.clip_text_base_attribute_embedding()
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.model, self.preprocess = clip.load('ViT-B/32', self.cfg.device)
+        self.user_base_attributes = self.user_defined_base_attributes()
+        self.clip_text_base_attribute_embedding()
+        
     
     def user_defined_base_attributes(self):
-        base_attributes_dict = {
+        base_attributes = {
             'color': [tuple(['blue', 'green', 'yellow', 'orange', 'red', 'white',  'violet', 'brown', 'aqua', 'black', 'cyan', 'purple']), None],
             'shape': [tuple(['rectangle', 'oval', 'star', 'cylinder', 'cube', 'pyramid', 'cone', 'sphere', 'cuboid']), None],
             'texture': [tuple(['metal', 'wood', 'leather', 'glass', 'plastic', 'ceramic', 'fabric', 'paper']), None], }
-        return base_attributes_dict
+        return base_attributes
 
     def clip_text_base_attribute_embedding(self):
-        base_dict_pth = 'outputs/laa/base_attr_embs.pth'
+        base_dict_pth = os.path.join(self.cfg.output_dir, 'base_attr_embs.pth')
         if os.path.exists(base_dict_pth):
-            base_attributes_dict = torch.load(base_dict_pth)
+            self.user_base_embeddings = torch.load(base_dict_pth)
         else:
-            base_attributes_dict = self.base_dict.copy()
-            for attr, val_list in self.base_dict.items():
+            self.user_base_embeddings = self.user_base_attributes.copy()
+            for attr, val_list in self.user_base_attributes.items():
                 embeddings = []
                 for c in val_list[0]:
-                    token_inputs = torch.cat([clip.tokenize(f"{c}") ]).to(device)        # [12, 77]
+                    token_inputs = torch.cat([clip.tokenize(f"{c}") ]).to(self.cfg.device)        # [12, 77]
                     token_features = self.model.encode_text(token_inputs)                # [1, 512]
                     token_features /= token_features.norm(dim=-1, keepdim=True)          # [1, 512]
                     embeddings.append(token_features)                                    # [Ntokens, 512]
                 embeddings = torch.cat(embeddings, 0).cpu()
-                base_attributes_dict[attr][1] = embeddings
-            torch.save(base_attributes_dict, os.path.join('outputs/laa/', 'base_attr_embs.pth'))
+                self.user_base_embeddings[attr][1] = embeddings
+            torch.save(self.user_base_embeddings, base_dict_pth)
             print("---> save attribute emdeddings done!")
-        return base_attributes_dict
 
     def clip_image_crops_embedding(self, image_pil, boxes, masks):
         image_crop_features = []
@@ -294,7 +295,7 @@ class ImageCropsBaseAttributesMatching:
 
             # encode
             image_input = self.preprocess(image_crops)         # [1, 3, 224, 224]
-            image_input = image_input.unsqueeze(0).to(device)  # [1, 3, 224, 224]
+            image_input = image_input.unsqueeze(0).to(self.cfg.device)  # [1, 3, 224, 224]
             with torch.no_grad():
                 image_features = self.model.encode_image(image_input)           # [1, 512]
                 image_features /= image_features.norm(dim=-1, keepdim=True)
@@ -318,9 +319,10 @@ class ImageCropsBaseAttributesMatching:
             base_attributes ['width']  = pos[2] - pos[0]
             base_attributes ['height'] = pos[3] - pos[1]
 
+
             # match (crop, base-dict)
-            for attr, val_list in self.base_dict.items():
-                text_features = val_list[1].to(device)
+            for attr, val_list in self.user_base_embeddings.items():
+                text_features = val_list[1].to(self.cfg.device)
                 similarity = (100.0 * crop_features[i] @ text_features.T).softmax(dim=-1) 
                 base_attributes[attr] = val_list[0][similarity.argmax()], similarity.max().detach().cpu().numpy().item()
             objects_base_attributes.append(base_attributes)
@@ -354,7 +356,7 @@ class GPT4Reasoning:
 
     def extract_unique_nouns(self, request): 
         self.prompt[0]['content'] = 'Extract the unique objects in the caption. Remove all the adjectives.' + \
-                        f'List the nouns in singular form. Split them by "{split} ". ' + \
+                        f'List the nouns in singular form. Split them by "{self.split} ". ' + \
                         f'Caption: {request}.'
 
         response = openai.ChatCompletion.create(model=self.llms[0], messages=self.prompt, temperature=self.temperature, max_tokens=self.max_tokens)
@@ -415,55 +417,56 @@ class GPT4Reasoning:
         return caption
 
 class TargetMatching:
-    def __init__(self, image_pil, request, crops_base_list, text_gpt_dict, cfg):
-        self.image = image_pil
+    def __init__(self, image_path, request, crops_base_list, text_gpt_dict, cfg):
+        self.rawimage = image_path
+        image_pil = Image.open(image_path).convert("RGB") 
+        self.imgsize = image_pil.size
         self.request = request
         self.subgraph = text_gpt_dict
         self.count = len(crops_base_list)
+        self.crops_base_list = crops_base_list
         self.cfg = cfg
-        crops_base_list = crops_base_list
 
-
-    def match_subgraph_target_base(self, crops_base_list, stepstr='self'):
+    def match_subgraph_target_base(self):
         subgraph_target_list = []
         for tgt in self.subgraph['target']:
-            keys_check = [k for k in tgt.keys() if k in crops_base_list[0].keys()]
-            subgraph_target_list = [c for c in crops_base_list if all(c[k][0] == tgt[k] and c[k][1] >= 0.3 for k in keys_check)]
+            keys_check = [k for k in tgt.keys() if k in self.crops_base_list[0].keys()]
+            subgraph_target_list = [c for c in self.crops_base_list if all(c[k][0] == tgt[k] and c[k][1] >= 0.3 for k in keys_check)]
         print(f'{len(subgraph_target_list)} boxes found!')
         
-        if len(subgraph_target_list)==1:
-            draw_candidate_boxes(self.image, crops_base_list, self.cfg.output_dir, stepstr= 'ref', save=True)
+        self.count = len(subgraph_target_list)
+        if self.cfg.visualize:
+            draw_candidate_boxes(self.rawimage, self.crops_base_list, cfg.output_dir, stepstr='nouns', save=True)
         return subgraph_target_list
 
-    def match_subgraph_related_base(self, subgraph_target_list, output_plot=True):
+    def match_subgraph_related_base(self, subgraph_target_list):
         assert len(subgraph_target_list) > 1, "No related objects in subgraph!"
         print('get boxes for disambiguation!')
         subgraph_target_related_list = subgraph_target_list
-        for item in text_gpt_dict['related']:
+        for item in self.subgraph['related']:
             keys_check = [k for k in item.keys() if k in subgraph_target_list[0].keys()]
             subgraph_target_related_list.append([c for c in subgraph_target_list if all(c[k][0] == item[k] and c[k][1] >= 0.3 for k in keys_check)])
-        
-        if output_plot:
-            output_pil = PlotUtils.draw_candidate_boxes(image_pil, subgraph_target_related_list)
-            PlotUtils.save_candiate_plot(output_pil, request, output_dir, stepstr= 'related', withcaption=False)
 
+        subgraph_target_related_list = [ x for x in subgraph_target_related_list if x != [] ]
+        self.count = len(subgraph_target_related_list)
+        if cfg.visualize:
+            draw_candidate_boxes(self.rawimage, subgraph_target_related_list, self.cfg.output_dir, stepstr= 'related', save=True)
         return subgraph_target_related_list
 
-    def match_subgraph_reasoning_base(self, image_pil, request, subgraph_list, image_size=(None, None), output_dir='./'):
-        # further disambiguation
-        gpt_ref_ids = GPT4Reasoning.extract_disambiguated_target(request, subgraph_list, image_size)
+    def match_subgraph_reasoning_base(self,subgraph_list):
+        # gpt for disambiguation
+        gpt_ref_ids = GPT4Reasoning().extract_disambiguated_target(self.request, subgraph_list, self.imgsize)
         ref_ids = list(map(int, gpt_ref_ids.split(',')))
         gpt_ref_list = [subgraph_list[i] for i in ref_ids]
 
-        output_pil = PlotUtils.draw_candidate_boxes(image_pil, gpt_ref_list)
-        PlotUtils.save_candiate_plot(output_pil, request, output_dir, stepstr= 'ref', withcaption=True)
+        self.count = len(gpt_ref_list)
+        if cfg.visualize:
+            draw_candidate_boxes(self.rawimage, gpt_ref_list, self.cfg.output_dir, stepstr= 'gptref', save=True)
+            draw_overlay_caption(self.cfg.output_dir, self.request, withcaption=True)
         return gpt_ref_list
-
-    def _advanced_matching(self, dict1, dict2):
-        # complex matching
-        if len(candidates_ref) > 1:
-            print('get boxes for advanced matching!')
-        
+    
+    def match_complex_attributes(self):
+        # "add function to match complex attributes"
         CropBLIP = False
         if CropBLIP:
             image_crop.save(os.path.join(output_dir, "crop_"+str(i)+ ".jpg"))
@@ -472,53 +475,62 @@ class TargetMatching:
             blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large", torch_dtype=torch.float16).to("cuda")
             crop_caption = generate_caption(image_crop) # BLIP
             print(f"Crop caption {i}: {crop_caption}")
-
-        return candidates_complex
+        pass
 
     def inference(self):
-        subgraph_target_list = match_subgraph_target_base(self, crops_base_list, output_plot=True)
-        self_pil = draw_candidate_boxes(self.image, crops_base_list, self.cfg.output_dir, stepstr= 'self', save=True)
-
-        self.count = len(subgraph_target_list)
-        if self.count == 1:
+        # matching sequence
+        subgraph_target_list = self.match_subgraph_target_base()
+        if self.count > 1:
+            subgraph_related_list = self.match_subgraph_related_base(subgraph_target_list)
+            if self.count > 1:
+                gpt_ref_list = self.match_subgraph_reasoning_base(subgraph_related_list)
+                print(f'{self.count} targets found!')
+                return gpt_ref_list
+            elif self.count == 1:
+                return subgraph_related_list
+            else:
+                return None
+        elif self.count == 1:
+            print('target object found!')
             return subgraph_target_list
-        elseif self.count == 0:
+        else:
+            print('no target object found!')
+            return None
 
-        match_subgraph_related_base(self, image_pil, request, subgraph_target_list, text_gpt_dict, cfg, output_plot=True)
-            
-
-        
-
-
-
-
-# langchain 
 # image: objects_base_attributes [{}]
 def img_inference_grounded_objects_base_attributes(image_path, request, cfg):
     image_pil = Image.open(image_path).convert("RGB") 
-    gpt = GPT4Reasoning()
-    unique_nouns = gpt.extract_unique_nouns(request, split=split) 
+    unique_nouns = GPT4Reasoning().extract_unique_nouns(request) 
 
-    detector = GroundedDetection()
-    boxes, pred_phrases = detector.inference(image_path, unique_nouns, cfg.box_threshold, cfg.text_threshold, device=cfg.device)
+    detector = GroundedDetection(cfg)
+    boxes, pred_phrases = detector.inference(image_path, unique_nouns, cfg.box_threshold, cfg.text_threshold, cfg.iou_threshold)
+    segmenter = DetPromptedSegmentation(cfg)
+    masks = segmenter.inference(image_path, prompt_boxes=boxes, save_json=False)
 
-    segmenter = DetPromptedSegmentation()
-    masks = segmenter.inference(image_path, prompt_boxes=boxes, save_json=False, output_dir=output_dir)
-
-    matcher_base = ImageCropsBaseAttributesMatching()
+    matcher_base = ImageCropsBaseAttributesMatching(cfg)
     objects_base_attributes = matcher_base.get_objects_base_attributes(image_pil, boxes, pred_phrases, masks) 
-    return image_pil, objects_base_attributes
+    return objects_base_attributes
 
 # text: subgraph_base_attributes {k:[{},{}]}
 def txt_inference_subgraph(request):
-    # example for single target test: "give me the yellow stool"
-    # subgraph_base_attributes = {'target': [{'name': 'stool', 'color': 'yellow'}], 'related': []}  
+    # ----------------- subgraph_base_attributes -----------------
+    #   example for single target test: "give me the yellow stool"
+    #   subgraph_base_attributes = {'target': [{'name': 'stool', 'color': 'yellow'}], 'related': []}  
     #  
-    # example for s single target, related with other objects.
-    # subgraph_base_attributes = { 'target':  [{'name': 'stool', 'color': 'red'}], 
+    #   example for s single target, related with other objects.
+    #   subgraph_base_attributes = { 'target':  [{'name': 'stool', 'color': 'red'}], 
     #                              'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
-    subgraph_dict = GPT4Reasoning.extract_target_relations(request) 
+    subgraph_dict = GPT4Reasoning().extract_target_relations(request) 
     return subgraph_dict
+
+def main(image_path, request, cfg):
+    # input inference
+    crops_base_list = img_inference_grounded_objects_base_attributes(image_path, request, cfg)
+    text_subgraph = txt_inference_subgraph(request)
+
+    # matching process
+    chatref = TargetMatching(image_path, request, crops_base_list, text_subgraph, cfg)
+    targets = chatref.inference()
 
 
 # gradio bot
@@ -583,48 +595,35 @@ class ConversationBot:
 
 
 if __name__ == "__main__":
-    if True:
-        # argparse
-        parser = argparse.ArgumentParser("LAA Demo", add_help=True)
-        parser.add_argument("--openai_key", type=str,required=True, help="openai key")
-        parser.add_argument("--input_image", type=str, required=True, help="path to image file")
-        parser.add_argument("--request", type=str, default="give me something", required=True, help="human request")
-        parser.add_argument("--output_dir", "-o", type=str, default="outputs", required=True, help="output directory")
-        parser.add_argument("--box_threshold", type=float, default=0.25, help="box threshold")
-        parser.add_argument("--text_threshold", type=float, default=0.2, help="text threshold")
-        parser.add_argument("--iou_threshold", type=float, default=0.5, help="iou threshold")
-        parser.add_argument("--device", type=str, default="cpu", help="running on cpu only!, default=False")
-        cfg = parser.parse_args()
+    # argparse
+    parser = argparse.ArgumentParser("ChatRef", add_help=True)
+    parser.add_argument("--openai_key", type=str, required=True, help="openai key")
+    parser.add_argument("--input_image", type=str, required=True, help="path to image file")
+    parser.add_argument("--request", type=str, default="give me something", required=True, help="human request")
+    parser.add_argument("--output_dir", "-o", type=str, default="outputs", required=True, help="output directory")
+    parser.add_argument("--box_threshold", type=float, default=0.25, help="box threshold")
+    parser.add_argument("--text_threshold", type=float, default=0.2, help="text threshold")
+    parser.add_argument("--iou_threshold", type=float, default=0.5, help="iou threshold")
+    parser.add_argument("--visualize", default=False, help="visualize intermediate data mode")
+    parser.add_argument("--device", type=str, default="cpu", help="running on cpu only!, default=False")
+    cfg = parser.parse_args()
 
-        # cfg
-        image_path = cfg.input_image
-        request = cfg.request
-        output_dir = os.path.join(output_dir, request)
+    image_path = cfg.input_image
+    request = cfg.request
+    cfg.output_dir = os.path.join(cfg.output_dir, request)
+    os.makedirs(cfg.output_dir,exist_ok=True)
 
-        box_threshold = cfg.box_threshold
-        text_threshold = cfg.box_threshold
-        iou_threshold = cfg.iou_threshold
-        device = cfg.device
-        os.makedirs(output_dir,exist_ok=True)
+    openai.api_key = cfg.openai_key
+    openai_proxy = None
+    if openai_proxy:
+        openai.proxy = {"http": openai_proxy, "https": openai_proxy}
 
-        openai.api_key = cfg.openai_key
-        openai_proxy = None
-        if openai_proxy:
-            openai.proxy = {"http": openai_proxy, "https": openai_proxy}
-
-    # inference from image and text
-    image_pil, crops_base_list = img_inference_grounded_objects_base_attributes(image_path, request, cfg)
-    text_subgraph = txt_inference_subgraph(request)
-
-    # matching process
-    subgraph_target_list = _1st_matching_subgraph_target_base(image_pil, crops_base_list, text_subgraph, cfg, output_plot=True)
-
-
-    
+    # main()
+    main(image_path, request, cfg)
     if False:
         bot = ConversationBot(load_dict=load_dict)
         with gr.Blocks(css="#chatbot .overflow-y-auto{height:500px}") as demo:
-            chatbot = gr.Chatbot(elem_id="chatbot", label="LAA_ChatRef")
+            chatbot = gr.Chatbot(elem_id="chatbot", label="ChatRef")
             state = gr.State([])
             with gr.Row():
                 with gr.Column(scale=0.7):
