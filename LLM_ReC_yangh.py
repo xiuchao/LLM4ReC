@@ -25,7 +25,7 @@ from GroundingDINO.groundingdino.models import build_model
 from GroundingDINO.groundingdino.util import box_ops
 from GroundingDINO.groundingdino.util.slconfig import SLConfig
 from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
-from segment_anything import build_sam, SamPredictor 
+from segment_anything.segment_anything import build_sam, SamPredictor 
 
 # langchain
 from langchain.agents.initialize import initialize_agent
@@ -109,7 +109,7 @@ def draw_candidate_boxes(image_path, crops_base_list, output_dir, stepstr= 'targ
 
         # draw textbox+text.
         fontPath = "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf"
-        sans16  =  ImageFont.truetype ( fontPath, 48 )
+        sans16  =  ImageFont.truetype (fontPath, 12)
         font = sans16  #font = ImageFont.load_default()
         label_txt = label[0]+"("+str(label[1])+")"
         if hasattr(font, "getbbox"):
@@ -167,14 +167,12 @@ class GroundedDetection:
             outputs = self.model(image[None], captions=[caption])
         logits = outputs["pred_logits"].cpu().sigmoid()[0]  # (nq, 256)
         boxes = outputs["pred_boxes"].cpu()[0]  # (nq, 4)
-        logits.shape[0]
 
         logits_filt = logits.clone()
         boxes_filt = boxes.clone()
         filt_mask = logits_filt.max(dim=1)[0] > box_threshold
         logits_filt = logits_filt[filt_mask]  # num_filt, 256
         boxes_filt = boxes_filt[filt_mask]    # num_filt, 4
-        logits_filt.shape[0]
 
         tokenlizer = self.model.tokenizer
         tokenized = tokenlizer(caption)
@@ -335,7 +333,7 @@ class ImageCropsBaseAttributesMatching:
             for attr, val_list in self.user_base_embeddings.items():
                 text_features = val_list[1].to(self.cfg.device)
                 similarity = (100.0 * crop_features[i] @ text_features.T).softmax(dim=-1) 
-                base_attributes[attr] = val_list[0][similarity.argmax()], similarity.max().detach().cpu().numpy().item()
+                base_attributes[attr] = val_list[0][similarity.argmax()], round(similarity.max().detach().cpu().numpy().item(), 2)
             objects_base_attributes.append(base_attributes)
 
         return objects_base_attributes
@@ -358,37 +356,52 @@ class ImageBLIPCaptioning:
         # print(f"Crop caption {i}: {crop_caption}")
 
 class GPT4Reasoning: 
-    def __init__(self):
+    def __init__(self, split=',', delimiter="###", max_tokens=100, temperature=0.6):
         self.llms = ["gpt-3.5-turbo", "gpt-4"]
-        self.split=','  
-        self.max_tokens=100 
-        self.temperature=0.6
-        self.prompt = [{ 'role': 'system', 'content': ''}]
+        self.split = split
+        self.delimiter = delimiter
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.prompt = [{'role': 'user', 'content': ''}]
 
     def extract_unique_nouns(self, request): 
-        self.prompt[0]['content'] = 'Extract the unique objects in the caption. Remove all the adjectives.' + \
-                        f'List the nouns in singular form. Split them by "{self.split} ". ' + \
-                        f'Caption: {request}.'
-
-        response = openai.ChatCompletion.create(model=self.llms[0], messages=self.prompt, temperature=self.temperature, max_tokens=self.max_tokens)
+        self.prompt[0]['content'] = f"""
+        Extract the unique objects provided by the following caption delimited by {self.delimiter}. 
+        Remove all adjectives.
+        List the objects in singular form and delimite them by comma.
+        Caption: {self.delimiter}{request}{self.delimiter}.
+        """
+        
+        response = openai.ChatCompletion.create(model=self.llms[0], 
+                                                messages=self.prompt, 
+                                                temperature=self.temperature, 
+                                                max_tokens=self.max_tokens)
         reply = response['choices'][0]['message']['content']
         unique_nouns = reply.split(':')[-1].strip() # sometimes return with "noun: xxx, xxx, xxx"
+        print("BOT:", unique_nouns)
         return unique_nouns
 
     # reasoning related objects: subgraph_dict
     def extract_target_relations(self, request): 
         # Request: "give the red apple between the blue cup and round white plate."
         # Request: "give the red apple and yellow apple between the blue cup and the round white plate.
-        self.prompt[0]['content'] = 'Extract the target object, related objects and spatial relationships from the human request.' + \
-                'Specify the object in singular mode, e.g. two red apples as (red apple, red apple)' + \
-                'Output follow standard JSON string format.Here is an example:' + \
-                'request: give the red cup next to the red apple, the spoon on the left of the square plate.' + \
-                '{  "target":  [{"name": "cup", "color": "red"}, {"name": "spoon"}],' + \
-                '   "related": [{"spatial": "next to", "target":"0", "name": "apple", "color": "red"},' + \
-                '               {"spatial": "on the left of", "target":"1", "name": "plate", "shape": "square"}]}' + \
-                f'Human request: {request}.'
+        sample_json = {"target": [{"name": "cup", "color": "red"}, {"name": "spoon"}],
+                        "related": [{"spatial": "next to", "target":"0", "name": "apple", "color": "red"},
+                                    {"spatial": "on the left of", "target":"1", "name": "plate", "shape": "square"}]
+                    }
+        self.prompt[0]['content'] = f"""
+        Extract the target object, related objects and spatial relationships from the human request.
+        Specify the object in singular mode, e.g. two red apples as (red apple, red apple)
+        Output follow standard JSON format. Here is an example:
+        request: give the red cup next to the red apple, the spoon on the left of the square plate.
+        {sample_json}
+        Human request: {request}.
+        """
 
-        response = openai.ChatCompletion.create(model=self.llms[1], messages=self.prompt, temperature=self.temperature, max_tokens=self.max_tokens)
+        response = openai.ChatCompletion.create(model=self.llms[0], 
+                                                messages=self.prompt, 
+                                                temperature=self.temperature, 
+                                                max_tokens=self.max_tokens)
         reply = response['choices'][0]['message']['content']
         def json2dict(input_str):
             input_str = input_str.replace("'", '"').strip()
@@ -399,14 +412,25 @@ class GPT4Reasoning:
 
     # locate target, disambiguation
     def extract_disambiguated_target(self, request, crops_attributes_list, image_size=(None, None)):
-        self.prompt[0]['content'] = 'Locate the target object(s) in the request according to the given information.' + \
-                'The image size is {image_size}. Output only the order index, like 0, 1, 2...' + \
-                f'Human request: {request}.' + \
-                f'Candidate objects: {crops_attributes_list}.'
-
-        response = openai.ChatCompletion.create(model=self.llms[1], messages=self.prompt, temperature=self.temperature, max_tokens=self.max_tokens)
+        # self.prompt[0]['content'] = f"""
+        # Locate the target object(s) from human request according to the given information.
+        # The image size is {image_size}.
+        # Human request: {request}.
+        # Candidate objects: {crops_attributes_list}.
+        # Output only the index number.
+        # """
+        self.prompt[0]['content'] = f"""
+        Locate the target object(s) in the request according to the given information.'
+        The image size is {image_size}. Output only the order index, like 0, 1, 2...'
+        Human request: {request}.
+        Candidate objects: {crops_attributes_list}.
+        """
+        response = openai.ChatCompletion.create(model=self.llms[0], 
+                                                messages=self.prompt, 
+                                                temperature=self.temperature, 
+                                                max_tokens=500)
         reply = response['choices'][0]['message']['content']
-        return reply 
+        return reply
 
     def get_counted_BLIP(self, caption, pred_phrases):
         object_list = [obj.split('(')[0] for obj in pred_phrases]
@@ -416,12 +440,17 @@ class GPT4Reasoning:
         object_num = ', '.join(object_num)
         print(f"Correct object number: {object_num}")
 
-        self.prompt[0]['content'] = 'Revise the number in the caption if it is wrong. ' + \
-                        f'Caption: {caption}. ' + \
-                        f'True object number: {object_num}. ' + \
-                        'Only give the revised caption. ' 
+        self.prompt[0]['content'] = f"""
+        Revise the number in the caption if it is wrong.
+        Caption: {caption}.
+        True object number: {object_num}.
+        Only give the revised caption.
+        """
         
-        response = openai.ChatCompletion.create(model=self.llms[1], messages=self.prompt,temperature=self.temperature, max_tokens=self.max_tokens)
+        response = openai.ChatCompletion.create(model=self.llms[0], 
+                                                messages=self.prompt, 
+                                                temperature=self.temperature, 
+                                                max_tokens=self.max_tokens)
         reply = response['choices'][0]['message']['content']
         # sometimes return with "Caption: xxx, xxx, xxx"
         caption = reply.split(':')[-1].strip()
@@ -456,7 +485,7 @@ class TargetMatching:
         subgraph_target_related_list = subgraph_target_list
         for item in self.subgraph['related']:
             keys_check = [k for k in item.keys() if k in subgraph_target_list[0].keys()]
-            subgraph_target_related_list.append([c for c in subgraph_target_list if all(c[k][0] == item[k] and c[k][1] >= 0.3 for k in keys_check)])
+            subgraph_target_related_list.extend([c for c in self.crops_base_list if all(c[k][0] == item[k] and c[k][1] >= 0.3 for k in keys_check)])
 
         subgraph_target_related_list = [ x for x in subgraph_target_related_list if x != [] ]
         self.count = len(subgraph_target_related_list)
@@ -464,9 +493,9 @@ class TargetMatching:
             draw_candidate_boxes(self.rawimage, subgraph_target_related_list, self.cfg.output_dir, stepstr= 'related', save=True)
         return subgraph_target_related_list
 
-    def match_subgraph_reasoning_base(self,subgraph_list, showtitle=False):
+    def match_subgraph_reasoning_base(self, subgraph_list, showtitle=False):
         # gpt for disambiguation
-        gpt_ref_ids = GPT4Reasoning().extract_disambiguated_target(self.request, subgraph_list, self.imgsize)
+        gpt_ref_ids = GPT4Reasoning(temperature=0).extract_disambiguated_target(self.request, subgraph_list, self.imgsize)
         ref_ids = list(map(int, gpt_ref_ids.split(',')))
         gpt_ref_list = [subgraph_list[i] for i in ref_ids]
 
@@ -516,7 +545,8 @@ class TargetMatching:
          description="useful when you try to understand the image content in a structured way")
 def img_inference_grounded_objects_base_attributes(image_path, request, cfg):
     image_pil = Image.open(image_path).convert("RGB") 
-    unique_nouns = GPT4Reasoning().extract_unique_nouns(request) 
+    unique_nouns = GPT4Reasoning(temperature=0).extract_unique_nouns(request)
+    # unique_nouns = "stool"
 
     detector = GroundedDetection(cfg)
     boxes, pred_phrases = detector.inference(image_path, unique_nouns, cfg.box_threshold, cfg.text_threshold, cfg.iou_threshold)
@@ -537,18 +567,20 @@ def txt_inference_subgraph(request):
     #   example for s single target, related with other objects.
     #   subgraph_base_attributes = { 'target':  [{'name': 'stool', 'color': 'red'}], 
     #                              'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
-    subgraph_dict = GPT4Reasoning().extract_target_relations(request) 
+    subgraph_dict = GPT4Reasoning(temperature=0).extract_target_relations(request) 
     return subgraph_dict
 
 def chatref_main(image_path, request, cfg):
     # input inference
     crops_base_list = img_inference_grounded_objects_base_attributes(image_path, request, cfg)
     text_subgraph = txt_inference_subgraph(request)
+    # text_subgraph = {'target': [{'name': 'stool', 'color': 'red'}], 
+    #                  'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
 
     # matching process
     chatref = TargetMatching(image_path, request, crops_base_list, text_subgraph, cfg)
     targets = chatref.inference()
-
+    return
 
 # ====================  ChatRef LangChain & GUI =========================
 def cut_dialogue_history(history_memory, keep_last_n_words=500):
@@ -609,84 +641,83 @@ New input: {input}
 Thought: Do I need to use a tool? {agent_scratchpad}"""
 
 # gradio bot
-if True:
-    class ConversationBot:
-        def __init__(self, cfg):
-            self.cfg = cfg
-            print(f"Initializing ChatRef")
-            self.llm = OpenAI(model_name="gpt-3.5-turbo", openai_api_key= cfg.openai_api_key, temperature=0)
-            self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')
+class ConversationBot:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        print(f"Initializing ChatRef")
+        self.llm = OpenAI(model_name="gpt-3.5-turbo", openai_api_key=cfg.openai_api_key, temperature=0)
+        self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')
 
-            self.tools = [] 
-            for func in [img_inference_grounded_objects_base_attributes, txt_inference_subgraph, TargetMatching.inference]:
-                try:
-                    self.tools.append(Tool(name=func.name, description=func.description, func=func))
-                except:
-                    breakpoint()
-            
-            self.agent = initialize_agent(
-                self.tools,
-                self.llm,
-                agent="conversational-react-description",
-                verbose=True,
-                memory=self.memory,
-                return_intermediate_steps=True,
-                agent_kwargs={'prefix': CHAT_REF_PREFIX, 
-                            'format_instructions': CHAT_REF_FORMAT_INSTRUCTIONS,
-                            'suffix': CHAT_REF_SUFFIX},)
+        self.tools = [] 
+        for func in [img_inference_grounded_objects_base_attributes, txt_inference_subgraph, TargetMatching.inference]:
+            try:
+                self.tools.append(Tool(name=func.name, description=func.description, func=func))
+            except:
+                breakpoint()
+        
+        self.agent = initialize_agent(
+            self.tools,
+            self.llm,
+            agent="conversational-react-description",
+            verbose=True,
+            memory=self.memory,
+            return_intermediate_steps=True,
+            agent_kwargs={'prefix': CHAT_REF_PREFIX, 
+                        'format_instructions': CHAT_REF_FORMAT_INSTRUCTIONS,
+                        'suffix': CHAT_REF_SUFFIX},)
 
-        def run_text(self, text, state):
-            self.cfg.request = text
-            self.agent.memory.buffer = cut_dialogue_history(self.agent.memory.buffer, keep_last_n_words=500)
-            res = self.agent({"input": text})
-            res['output'] = res['output'].replace("\\", "/")
-            response = re.sub('(image/\S*png)', lambda m: f'![](/file={m.group(0)})*{m.group(0)}*', res['output'])
-            state = state + [(text, response)]
-            print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n"
-                f"Current Memory: {self.agent.memory.buffer}")
-            return state, state
+    def run_text(self, text, state):
+        self.cfg.request = text
+        self.agent.memory.buffer = cut_dialogue_history(self.agent.memory.buffer, keep_last_n_words=500)
+        res = self.agent({"input": text})
+        res['output'] = res['output'].replace("\\", "/")
+        response = re.sub('(image/\S*png)', lambda m: f'![](/file={m.group(0)})*{m.group(0)}*', res['output'])
+        state = state + [(text, response)]
+        print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n"
+            f"Current Memory: {self.agent.memory.buffer}")
+        return state, state
 
-        def run_image(self, image, state, txt):
-            # creat folder 'image'
-            os.makedirs('image', exist_ok=True) 
-            image_filename = os.path.join('image', f"{str(uuid.uuid4())[:8]}.png")
-            self.cfg.input_image = image_filename
+    def run_image(self, image, state, txt):
+        # creat folder 'image'
+        os.makedirs('image', exist_ok=True) 
+        image_filename = os.path.join('image', f"{str(uuid.uuid4())[:8]}.png")
+        self.cfg.input_image = image_filename
 
-            print("======>Auto Resize Image...")
-            img = Image.open(image.name)
-            width, height = img.size
-            ratio = min(512 / width, 512 / height)
-            width_new, height_new = (round(width * ratio), round(height * ratio))
-            width_new = int(np.round(width_new / 64.0)) * 64
-            height_new = int(np.round(height_new / 64.0)) * 64
-            img = img.resize((width_new, height_new))
-            img = img.convert('RGB')
-            img.save(image_filename, "PNG")
-            print(f"Resize image form {width}x{height} to {width_new}x{height_new}")
-            
-            # do the job
-            Human_prompt = f'\nHuman: provide a figure named {image_filename}. If you understand, say \"Received\". \n'
-            AI_prompt = "Received.  "
-            self.agent.memory.buffer = self.agent.memory.buffer + Human_prompt + 'AI: ' + AI_prompt
-            state = state + [(f"![](/file={image_filename})*{image_filename}*", AI_prompt)]
-            print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n"
-                f"Current Memory: {self.agent.memory.buffer}")
-            return state, state, f'{txt} {image_filename} '
+        print("======>Auto Resize Image...")
+        img = Image.open(image.name)
+        width, height = img.size
+        ratio = min(512 / width, 512 / height)
+        width_new, height_new = (round(width * ratio), round(height * ratio))
+        width_new = int(np.round(width_new / 64.0)) * 64
+        height_new = int(np.round(height_new / 64.0)) * 64
+        img = img.resize((width_new, height_new))
+        img = img.convert('RGB')
+        img.save(image_filename, "PNG")
+        print(f"Resize image form {width}x{height} to {width_new}x{height_new}")
+        
+        # do the job
+        Human_prompt = f'\nHuman: provide a figure named {image_filename}. If you understand, say \"Received\". \n'
+        AI_prompt = "Received.  "
+        self.agent.memory.buffer = self.agent.memory.buffer + Human_prompt + 'AI: ' + AI_prompt
+        state = state + [(f"![](/file={image_filename})*{image_filename}*", AI_prompt)]
+        print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n"
+            f"Current Memory: {self.agent.memory.buffer}")
+        return state, state, f'{txt} {image_filename} '
 
 
 if __name__ == "__main__":
     # argparse
     parser = argparse.ArgumentParser("ChatRef", add_help=True)
-    parser.add_argument("--openai_api_key", type=str, required=True, help="openai key")
-    parser.add_argument("--input_image", type=str, help="path to image file")
-    parser.add_argument("--request", type=str, default="give me something", help="human request")
-    parser.add_argument("--output_dir", "-o", type=str, default="outputs", required=True, help="output directory")
+    # parser.add_argument("--openai_api_key", type=str, required=False, help="openai key")
+    parser.add_argument("--input_image", type=str, default="image/e12572de.png", help="path to image file")
+    parser.add_argument("--request", type=str, default="red stool on the left of the yellow stool", help="human request")
+    parser.add_argument("--output_dir", "-o", type=str, default="outputs", help="output directory")
     parser.add_argument("--box_threshold", type=float, default=0.25, help="box threshold")
     parser.add_argument("--text_threshold", type=float, default=0.2, help="text threshold")
     parser.add_argument("--iou_threshold", type=float, default=0.5, help="iou threshold")
-    parser.add_argument("--visualize", default=False, help="visualize intermediate data mode")
+    parser.add_argument("--visualize", default=True, help="visualize intermediate data mode")
     parser.add_argument("--device", type=str, default="cpu", help="running on cpu only!, default=False")
-    parser.add_argument("--ui", default=False, help="run on gradio UI")
+    parser.add_argument("--ui", default=True, help="run on gradio UI")
     cfg = parser.parse_args()
 
     image_path = cfg.input_image
@@ -694,13 +725,16 @@ if __name__ == "__main__":
     cfg.output_dir = os.path.join(cfg.output_dir, request)
     os.makedirs(cfg.output_dir,exist_ok=True)
 
+    from dotenv import load_dotenv, find_dotenv
+    _ = load_dotenv(find_dotenv()) # read local .env file
+    cfg.openai_api_key = os.environ['OPENAI_API_KEY']
     openai.api_key = cfg.openai_api_key
     openai_proxy = None
     if openai_proxy:
         openai.proxy = {"http": openai_proxy, "https": openai_proxy}
 
     if not cfg.ui:
-        main(image_path, request, cfg)
+        chatref_main(image_path, request, cfg)
     else:
         bot = ConversationBot(cfg)
         with gr.Blocks(css="#chatbot .overflow-y-auto{height:500px}") as demo:

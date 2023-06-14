@@ -24,7 +24,7 @@ import math
 import torch
 from torch import nn
 
-from groundingdino.util.misc import NestedTensor
+from GroundingDINO.groundingdino.util.misc import NestedTensor
 
 
 class PositionEmbeddingSine(nn.Module):
