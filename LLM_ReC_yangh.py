@@ -10,7 +10,6 @@ import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
-import gradio as gr
 
 # ChatGPT, BLIP
 import openai
@@ -27,14 +26,6 @@ from GroundingDINO.groundingdino.util.slconfig import SLConfig
 from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
 from segment_anything.segment_anything import build_sam, SamPredictor 
 
-# langchain
-from langchain.agents.initialize import initialize_agent
-from langchain.agents.tools import Tool
-from langchain.chains.conversation.memory import ConversationBufferMemory
-from langchain.llms.openai import OpenAI
-
-# uuid
-import uuid
 
 # utils
 def prompts(name, description):
@@ -545,8 +536,8 @@ class TargetMatching:
          description="useful when you try to understand the image content in a structured way")
 def img_inference_grounded_objects_base_attributes(image_path, request, cfg):
     image_pil = Image.open(image_path).convert("RGB") 
-    unique_nouns = GPT4Reasoning(temperature=0).extract_unique_nouns(request)
-    # unique_nouns = "stool"
+    # unique_nouns = GPT4Reasoning(temperature=0).extract_unique_nouns(request)
+    unique_nouns = "stool"
 
     detector = GroundedDetection(cfg)
     boxes, pred_phrases = detector.inference(image_path, unique_nouns, cfg.box_threshold, cfg.text_threshold, cfg.iou_threshold)
@@ -582,127 +573,6 @@ def chatref_main(image_path, request, cfg):
     targets = chatref.inference()
     return
 
-# ====================  ChatRef LangChain & GUI =========================
-def cut_dialogue_history(history_memory, keep_last_n_words=500):
-    if history_memory is None or len(history_memory) == 0:
-        return history_memory
-    tokens = history_memory.split()
-    n_tokens = len(tokens)
-    print(f"history_memory:{history_memory}, n_tokens: {n_tokens}")
-    if n_tokens < keep_last_n_words:
-        return history_memory
-    paragraphs = history_memory.split('\n')
-    last_n_tokens = n_tokens
-    while last_n_tokens >= keep_last_n_words:
-        last_n_tokens -= len(paragraphs[0].split(' '))
-        paragraphs = paragraphs[1:]
-    return '\n' + '\n'.join(paragraphs)
-
-
-CHAT_REF_PREFIX = """ ChatRef is designed to be able to assist with refering expression comprehension. 
-    Given input image, ChatRef aims to locate the target object(s) in the image that human requested. 
-    ChatRef is a powerful visual dialogue tool that can help with tasks that requires fine-grained understanding and spatial reasoning
-
-    ChatRef is able to use tools in a sequence to finish refer tasks. For example, ChatRef first extract visual information from images, 
-    which will be further used for spatial reasoning to match the request and locate the targets.    
-    
-    Each image will have a file name formed as "image/xxx.png", and ChatRef can invoke different tools to indirectly understand pictures. 
-    When talking about images, ChatRef is very strict to the file name and will never fabricate nonexistent files. 
-    When using tools to generate new image files, ChatRef is also known that the image may not be the same as the user's demand.
-    ChatRef is loyal to the tool observation outputs rather than faking the image content and image file name. 
-    It will remember to provide the file name from the last tool observation, if a new image is generated.
-
-    TOOLS:
-    ------
-    ChatRef has the following tools:
-    """
-
-CHAT_REF_FORMAT_INSTRUCTIONS = """To use a tool, please use the following format:
-
-```
-Thought: Do I need to use a tool? Yes
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-```
-
-When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
-```
-Thought: Do I need to use a tool? No
-{ai_prefix}: [your response here]
-```
-""" 
-
-CHAT_REF_SUFFIX = """You are very strict to the filename correctness and will never fake a file name if it does not exist.
-You will remember to provide the image file name loyally if it's provided in the last tool observation. Begin!
-
-Previous conversation history: {chat_history}
-New input: {input}
-Thought: Do I need to use a tool? {agent_scratchpad}"""
-
-# gradio bot
-class ConversationBot:
-    def __init__(self, cfg):
-        self.cfg = cfg
-        print(f"Initializing ChatRef")
-        self.llm = OpenAI(model_name="gpt-3.5-turbo", openai_api_key=cfg.openai_api_key, temperature=0)
-        self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')
-
-        self.tools = [] 
-        for func in [img_inference_grounded_objects_base_attributes, txt_inference_subgraph, TargetMatching.inference]:
-            try:
-                self.tools.append(Tool(name=func.name, description=func.description, func=func))
-            except:
-                breakpoint()
-        
-        self.agent = initialize_agent(
-            self.tools,
-            self.llm,
-            agent="conversational-react-description",
-            verbose=True,
-            memory=self.memory,
-            return_intermediate_steps=True,
-            agent_kwargs={'prefix': CHAT_REF_PREFIX, 
-                        'format_instructions': CHAT_REF_FORMAT_INSTRUCTIONS,
-                        'suffix': CHAT_REF_SUFFIX},)
-
-    def run_text(self, text, state):
-        self.cfg.request = text
-        self.agent.memory.buffer = cut_dialogue_history(self.agent.memory.buffer, keep_last_n_words=500)
-        res = self.agent({"input": text})
-        res['output'] = res['output'].replace("\\", "/")
-        response = re.sub('(image/\S*png)', lambda m: f'![](/file={m.group(0)})*{m.group(0)}*', res['output'])
-        state = state + [(text, response)]
-        print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n"
-            f"Current Memory: {self.agent.memory.buffer}")
-        return state, state
-
-    def run_image(self, image, state, txt):
-        # creat folder 'image'
-        os.makedirs('image', exist_ok=True) 
-        image_filename = os.path.join('image', f"{str(uuid.uuid4())[:8]}.png")
-        self.cfg.input_image = image_filename
-
-        print("======>Auto Resize Image...")
-        img = Image.open(image.name)
-        width, height = img.size
-        ratio = min(512 / width, 512 / height)
-        width_new, height_new = (round(width * ratio), round(height * ratio))
-        width_new = int(np.round(width_new / 64.0)) * 64
-        height_new = int(np.round(height_new / 64.0)) * 64
-        img = img.resize((width_new, height_new))
-        img = img.convert('RGB')
-        img.save(image_filename, "PNG")
-        print(f"Resize image form {width}x{height} to {width_new}x{height_new}")
-        
-        # do the job
-        Human_prompt = f'\nHuman: provide a figure named {image_filename}. If you understand, say \"Received\". \n'
-        AI_prompt = "Received.  "
-        self.agent.memory.buffer = self.agent.memory.buffer + Human_prompt + 'AI: ' + AI_prompt
-        state = state + [(f"![](/file={image_filename})*{image_filename}*", AI_prompt)]
-        print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n"
-            f"Current Memory: {self.agent.memory.buffer}")
-        return state, state, f'{txt} {image_filename} '
 
 
 if __name__ == "__main__":
@@ -733,25 +603,4 @@ if __name__ == "__main__":
     if openai_proxy:
         openai.proxy = {"http": openai_proxy, "https": openai_proxy}
 
-    if not cfg.ui:
-        chatref_main(image_path, request, cfg)
-    else:
-        bot = ConversationBot(cfg)
-        with gr.Blocks(css="#chatbot .overflow-y-auto{height:500px}") as demo:
-            chatbot = gr.Chatbot(elem_id="chatbot", label="ChatRef")
-            state = gr.State([])
-            with gr.Row():
-                with gr.Column(scale=0.7):
-                    txt = gr.Textbox(show_label=False, placeholder="Upload an image, Enter text request, Press Enter").style(container=False)
-                with gr.Column(scale=0.15, min_width=0):
-                    clear = gr.Button("Clear")
-                with gr.Column(scale=0.15, min_width=0):
-                    btn = gr.UploadButton("Upload", file_types=["image"])
-
-            txt.submit(bot.run_text, [txt, state], [chatbot, state])
-            txt.submit(lambda: "", None, txt)
-            btn.upload(bot.run_image, [btn, state, txt], [chatbot, state, txt])
-            clear.click(bot.memory.clear)
-            clear.click(lambda: [], None, chatbot)
-            clear.click(lambda: [], None, state)
-            demo.launch(server_name="0.0.0.0", server_port=7992)
+    chatref_main(image_path, request, cfg)
