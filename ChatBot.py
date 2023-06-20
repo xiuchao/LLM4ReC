@@ -1,21 +1,16 @@
 import os
 import re
 import argparse
-import torch
-import torchvision
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import matplotlib.pyplot as plt
+from PIL import Image
 # uuid
 import uuid
 import gradio as gr
-
 # langchain
-from langchain.memory import ConversationTokenBufferMemory, ConversationBufferWindowMemory
+from langchain.memory import ConversationBufferWindowMemory
 from langchain.llms.openai import OpenAI
 
-
-from LLM_ReC_yangh import img_inference_grounded_objects_base_attributes, \
+from llm_grasp import img_inference_grounded_objects_base_attributes, \
     txt_inference_subgraph, TargetMatching
 
 
@@ -25,9 +20,6 @@ class ConversationBot:
         self.cfg = cfg
         print(f"Initializing ChatRef")
         self.llm = OpenAI(model_name="gpt-3.5-turbo", openai_api_key=cfg.openai_api_key, temperature=0)
-        # self.memory = ConversationTokenBufferMemory(max_token_limit=200,
-        #                                             memory_key="chat_history", 
-        #                                             output_key='output')
         self.memory = ConversationBufferWindowMemory(k=5, 
                                                      memory_key="chat_history", 
                                                      output_key='output')
@@ -118,7 +110,6 @@ def launch_chat_bot(cfg):
 if __name__ == "__main__":
     # argparse
     parser = argparse.ArgumentParser("ChatRef", add_help=True)
-    # parser.add_argument("--openai_api_key", type=str, required=False, help="openai key")
     parser.add_argument("--input_image", type=str, default="image/e12572de.png", help="path to image file")
     parser.add_argument("--request", type=str, default="red stool on the left of the yellow stool", help="human request")
     parser.add_argument("--output_dir", "-o", type=str, default="outputs", help="output directory")
