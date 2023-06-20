@@ -467,7 +467,7 @@ class TargetMatching:
         
         self.count = len(subgraph_target_list)
         if self.cfg.visualize:
-            draw_candidate_boxes(self.rawimage, self.crops_base_list, cfg.output_dir, stepstr='nouns', save=True)
+            draw_candidate_boxes(self.rawimage, self.crops_base_list, self.cfg.output_dir, stepstr='nouns', save=True)
         return subgraph_target_list
 
     def match_subgraph_related_base(self, subgraph_target_list):
@@ -480,8 +480,8 @@ class TargetMatching:
 
         subgraph_target_related_list = [ x for x in subgraph_target_related_list if x != [] ]
         self.count = len(subgraph_target_related_list)
-        if cfg.visualize:
-            draw_candidate_boxes(self.rawimage, subgraph_target_related_list, self.cfg.output_dir, stepstr= 'related', save=True)
+        if self.cfg.visualize:
+            draw_candidate_boxes(self.rawimage, subgraph_target_related_list, self.cfg.output_dir, stepstr='related', save=True)
         return subgraph_target_related_list
 
     def match_subgraph_reasoning_base(self, subgraph_list, showtitle=False):
@@ -491,8 +491,8 @@ class TargetMatching:
         gpt_ref_list = [subgraph_list[i] for i in ref_ids]
 
         self.count = len(gpt_ref_list)
-        if cfg.visualize:
-            draw_candidate_boxes(self.rawimage, gpt_ref_list, self.cfg.output_dir, stepstr= 'gptref', save=True)
+        if self.cfg.visualize:
+            draw_candidate_boxes(self.rawimage, gpt_ref_list, self.cfg.output_dir, stepstr='gptref', save=True)
             if showtitle:
                 draw_overlay_caption(self.cfg.output_dir, self.request, withcaption=True)
         return gpt_ref_list
@@ -501,7 +501,7 @@ class TargetMatching:
         # "add function to match complex attributes"
         CropBLIP = False
         if CropBLIP:
-            image_crop.save(os.path.join(output_dir, "crop_"+str(i)+ ".jpg"))
+            image_crop.save(os.path.join(self.cfg.output_dir, "crop_"+str(i)+ ".jpg"))
             # BLIP crop caption
             processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
             blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large", torch_dtype=torch.float16).to("cuda")

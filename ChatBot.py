@@ -41,7 +41,7 @@ class ConversationBot:
         # text_subgraph = {'target': [{'name': 'stool', 'color': 'red'}], 
         #         'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
         # # matching process
-        # chatref = TargetMatching(image_path, request, crops_base_list, text_subgraph, self.cfg)
+        # chatref = TargetMatching(image_path, request, crops_base_list, text_subgraph, cfg=self.cfg)
         # targets = chatref.inference()
         display_image = os.path.join(self.cfg.output_dir, request, "gptref.jpg")
         if os.path.exists(display_image):
@@ -110,7 +110,7 @@ def launch_chat_bot(cfg):
 
         clear.click(lambda: [], None, chat_hist)
         clear.click(lambda: [], None, img_btn)
-        clear.click(lambda: [], None, input_image)
+        # clear.click(lambda: [], None, input_image)
 
         demo.launch(server_name="0.0.0.0", server_port=7992)
 
