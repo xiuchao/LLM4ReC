@@ -10,46 +10,53 @@ from tools.detection import GroundedDetection
 from tools.segmentation import DetPromptedSegmentation
 
 
-
-@prompts(name="extract object crops and corresponding base attributes from image",
-         description="useful when you try to understand the image content in a structured way")
-def img_inference_grounded_objects_base_attributes(image_path, request, cfg):
-    image_pil = Image.open(image_path).convert("RGB") 
-    unique_nouns = GPT4Reasoning(temperature=0).extract_unique_nouns(request)
-    # unique_nouns = "stool"
-
-    detector = GroundedDetection(cfg)
-    boxes, pred_phrases = detector.inference(image_path, unique_nouns, cfg.box_threshold, cfg.text_threshold, cfg.iou_threshold)
-    segmenter = DetPromptedSegmentation(cfg)
-    masks = segmenter.inference(image_path, prompt_boxes=boxes, save_json=False)
-
-    matcher_base = ImageCropsBaseAttributesMatching(cfg)
-    objects_base_attributes = matcher_base.get_objects_base_attributes(image_pil, boxes, pred_phrases, masks) 
-    return objects_base_attributes
-
-@prompts(name="extract target-related information from request",
-         description="useful when you try to understand the human request in a structured way")
-def txt_inference_subgraph(request):
-    #   ----------------- subgraph_base_attributes -----------------
-    #   example for single target test: "give me the yellow stool"
-    #   subgraph_base_attributes = {'target': [{'name': 'stool', 'color': 'yellow'}], 'related': []}  
-    #  
-    #   example for s single target, related with other objects.
-    #   subgraph_base_attributes = { 'target':  [{'name': 'stool', 'color': 'red'}], 
-    #                              'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
-    subgraph_dict = GPT4Reasoning(temperature=0).extract_target_relations(request)
-    return subgraph_dict
+class Engine():
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.detector = GroundedDetection(cfg)
+        self.segmenter = DetPromptedSegmentation(cfg)
+        self.base_matching = ImageCropsBaseAttributesMatching(cfg)
 
 
-def chatref_main(image_path, request, cfg):
+    @prompts(name="extract object crops and corresponding base attributes from image",
+            description="useful when you try to understand the image content in a structured way")
+    def infer_img_grounded_objects_base_attributes(self, image_path, unique_nouns="stool"):
+        image = Image.open(image_path).convert("RGB") 
+        boxes, pred_phrases = self.detector.inference(image_path, unique_nouns, 
+                                                      self.cfg.box_threshold, self.cfg.text_threshold, self.cfg.iou_threshold)
+        masks = self.segmenter.inference(image_path, prompt_boxes=boxes, save_json=False)
+        self.base_matching.clip_text_base_attribute_embedding(self.cfg.output_dir)
+        objects_base_attributes = self.base_matching.get_objects_base_attributes(image, boxes, pred_phrases, masks) 
+        return objects_base_attributes
+
+
+    @prompts(name="extract target-related information from request",
+            description="useful when you try to understand the human request in a structured way")
+    def infer_txt_subgraph(self, request):
+        #   ----------------- subgraph_base_attributes -----------------
+        #   example for single target test: "give me the yellow stool"
+        #   subgraph_base_attributes = {'target': [{'name': 'stool', 'color': 'yellow'}], 'related': []}  
+        #  
+        #   example for s single target, related with other objects.
+        #   subgraph_base_attributes = { 'target':  [{'name': 'stool', 'color': 'red'}], 
+        #                              'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
+        subgraph_dict = GPT4Reasoning(temperature=0).extract_target_relations(request)
+        return subgraph_dict
+
+
+
+def chatref_main(cfg):
+    engine = Engine(cfg=cfg)
     # input inference
-    crops_base_list = img_inference_grounded_objects_base_attributes(image_path, request, cfg)
-    text_subgraph = txt_inference_subgraph(request)
+    unique_nouns = GPT4Reasoning(temperature=0).extract_unique_nouns(cfg.request)
+    # unique_nouns = "stool"
+    crops_base_list = engine.infer_img_grounded_objects_base_attributes(cfg.input_image, unique_nouns)
+    text_subgraph = engine.infer_txt_subgraph(cfg.request)
     # text_subgraph = {'target': [{'name': 'stool', 'color': 'red'}], 
     #                  'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
 
     # matching process
-    chatref = TargetMatching(image_path, request, crops_base_list, text_subgraph, cfg)
+    chatref = TargetMatching(cfg.image_path, cfg.request, crops_base_list, text_subgraph, cfg)
     targets = chatref.inference()
     return
 
@@ -69,10 +76,8 @@ if __name__ == "__main__":
     parser.add_argument("--ui", default=False, help="run on gradio UI")
     cfg = parser.parse_args()
 
-    image_path = cfg.input_image
-    request = cfg.request
-    cfg.output_dir = os.path.join(cfg.output_dir, request)
-    os.makedirs(cfg.output_dir,exist_ok=True)
+    cfg.output_dir = os.path.join(cfg.output_dir, cfg.request)
+    os.makedirs(cfg.output_dir, exist_ok=True)
 
     from dotenv import load_dotenv, find_dotenv
     _ = load_dotenv(find_dotenv()) # read local .env file
@@ -82,4 +87,4 @@ if __name__ == "__main__":
     if openai_proxy:
         openai.proxy = {"http": openai_proxy, "https": openai_proxy}
 
-    chatref_main(image_path, request, cfg)
+    chatref_main(cfg)

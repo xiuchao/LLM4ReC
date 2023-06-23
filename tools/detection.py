@@ -11,20 +11,19 @@ from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases
 class GroundedDetection:
     # GroundingDino
     def __init__(self, cfg):
+        self.cfg = cfg
         print(f"Initializing GroundingDINO to {cfg.device}")
         self.model = build_model(SLConfig.fromfile('GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py'))
         checkpoint = torch.load('groundingdino_swint_ogc.pth', map_location="cpu")
         self.model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+        self.model.to(self.cfg.device)
         self.model.eval()
         self.processor = T.Compose([ 
                             T.RandomResize([800], max_size=1333),
                             T.ToTensor(),
                             T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
-        self.cfg = cfg
 
     def inference(self, image_path, caption, box_threshold, text_threshold, iou_threshold):
-        self.model = self.model.to(self.cfg.device)
-
         # input: image, caption
         image_pil = Image.open(image_path).convert("RGB")  # load image
         image, _ = self.processor(image_pil, None) 

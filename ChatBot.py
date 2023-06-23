@@ -10,8 +10,8 @@ import gradio as gr
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.llms.openai import OpenAI
 
-from llm_grasp import img_inference_grounded_objects_base_attributes, \
-    txt_inference_subgraph, TargetMatching
+from tools.GPTReasoning import GPT4Reasoning
+from llm_grasp import Engine, TargetMatching
 
 
 # gradio bot
@@ -23,24 +23,29 @@ class ConversationBot:
         self.memory = ConversationBufferWindowMemory(k=5, 
                                                      memory_key="chat_history", 
                                                      output_key='output')
+        self.engine = Engine(cfg=cfg)
 
 
-    def __call__(self, chat_hist, file):
-        image_path = file.name
+    def __call__(self, chat_hist, image_pil):
         request = chat_hist[-1][0]
-        # crops_base_list = img_inference_grounded_objects_base_attributes(image_path, request, self.cfg)
-        # # text_subgraph = txt_inference_subgraph(request)
+        self.cfg.request = request
+        image_pil = process_img(image_pil)
+        # unique_nouns = GPT4Reasoning(temperature=0).extract_unique_nouns(request)
+        # unique_nouns = 'stool'
+        # crops_base_list = self.engine.infer_img_grounded_objects_base_attributes(image_path, unique_nouns)
+        # # text_subgraph = self.engine.infer_txt_subgraph(request)
         # text_subgraph = {'target': [{'name': 'stool', 'color': 'red'}], 
         #         'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
         # # matching process
-        # chatref = TargetMatching(image_path, request, crops_base_list, text_subgraph, cfg=self.cfg)
+        # chatref = TargetMatching(self.cfg, crops_base_list, text_subgraph)
         # targets = chatref.inference()
         display_image = os.path.join(self.cfg.output_dir, request, "gptref.jpg")
         if os.path.exists(display_image):
             follow_up = "Is it the correct object you want?"
             chat_hist[-1][1] = follow_up
-            return chat_hist, display_image
-        return chat_hist, image_path
+            output_pil = Image.open(display_image).convert("RGB") 
+            return chat_hist, output_pil
+        return chat_hist, image_pil
 
 
 def add_text(history, text):
@@ -48,25 +53,17 @@ def add_text(history, text):
     return history, gr.update(value="", interactive=False)
 
 
-def add_file(input_image, file):
-    # input_image = file.name
-    # '/tmp/gradio/345a7b57bee462c4a513c38a8ef0008c5e80cd2a/Ego4d-EpisodicMemory.PNG'
-    os.makedirs('image', exist_ok=True) 
-    image_filename = os.path.join('image', file.name.split('/')[-1])
-
+def process_img(image_pil: Image.Image):
     print("======>Auto Resize Image...")
-    img = Image.open(file.name)
-    width, height = img.size
+    width, height = image_pil.size
     ratio = min(512 / width, 512 / height)
     width_new, height_new = (round(width * ratio), round(height * ratio))
     width_new = int(np.round(width_new / 64.0)) * 64
     height_new = int(np.round(height_new / 64.0)) * 64
-    img = img.resize((width_new, height_new))
-    img = img.convert('RGB')
-    img.save(image_filename, "PNG")
+    image_pil = image_pil.resize((width_new, height_new))
+    image_pil = image_pil.convert('RGB')
     print(f"Resize image form {width}x{height} to {width_new}x{height_new}")
-    input_image = img
-    return input_image
+    return image_pil
     
 
 # def bot(history):
@@ -76,35 +73,32 @@ def add_file(input_image, file):
 
 def launch_chat_bot(cfg):
     bot = ConversationBot(cfg)
-    with gr.Blocks(css="#chatbot .overflow-y-auto{height:500px}") as demo:
-        with gr.Row().style(equal_height=True):
-            with gr.Column(scale=0.5):
-                input_image = gr.inputs.Image(shape=(256,256)).style(height=400)
-            with gr.Column(scale=0.5):
-                chat_hist = gr.Chatbot([], elem_id="chatbot", label="ChatRef").style(height=400)
+    block = gr.Blocks().queue()
+    with block:
         with gr.Row():
-            with gr.Column(scale=0.75):
-                txt = gr.Textbox(
-                    show_label=False,
-                    placeholder="Enter text and press enter",
-                ).style(container=False)
-            with gr.Column(scale=0.15, min_width=0):
-                img_btn = gr.UploadButton("📁", file_types=["image"])
-            with gr.Column(scale=0.15, min_width=0):
-                clear = gr.Button("Clear")
-                # clear = gr.ClearButton([btn, chat_hist])
+            with gr.Column():
+                input_image = gr.Image(source='upload', type="pil")
+                output_image = gr.outputs.Image(type="pil", label="results")
+            with gr.Column():
+                chat_hist = gr.Chatbot([], elem_id="chatbot", label="ChatRef").style(height=500)
+                with gr.Row().style(equal_height=True):
+                    with gr.Column(scale=0.85):
+                        txt = gr.Textbox(
+                            show_label=False,
+                            placeholder="Enter text and press enter",
+                        ).style(container=False)
+                    # with gr.Column(scale=0.15, min_width=0):
+                    #     img_btn = gr.UploadButton("📁", file_types=["image"])
+                    with gr.Column(scale=0.15, min_width=0):
+                        clear = gr.Button("Clear")
 
         txt_msg = txt.submit(add_text, [chat_hist, txt], [chat_hist, txt], queue=False).then(
-            bot, [chat_hist, img_btn], [chat_hist, input_image]
+            bot, [chat_hist, input_image], [chat_hist, output_image]
         )
         txt_msg.then(lambda: gr.update(interactive=True), None, [txt], queue=False)
-        file_msg = img_btn.upload(add_file, [input_image, img_btn], [input_image], queue=False)
-
         clear.click(lambda: [], None, chat_hist)
-        clear.click(lambda: [], None, img_btn)
-        # clear.click(lambda: [], None, input_image)
 
-        demo.launch(server_name="0.0.0.0", server_port=7992)
+    block.launch(server_name="0.0.0.0", server_port=7992, debug=True)
 
 
 if __name__ == "__main__":

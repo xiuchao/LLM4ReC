@@ -102,7 +102,7 @@ class ImageCropsBaseAttributesMatching:
         self.cfg = cfg
         self.model, self.preprocess = clip.load('ViT-B/32', self.cfg.device)
         self.user_base_attributes = self.user_defined_base_attributes()
-        self.clip_text_base_attribute_embedding()
+        # self.clip_text_base_attribute_embedding()
         
     
     def user_defined_base_attributes(self):
@@ -112,8 +112,8 @@ class ImageCropsBaseAttributesMatching:
             'texture': [tuple(['metal', 'wood', 'leather', 'glass', 'plastic', 'ceramic', 'fabric', 'paper']), None], }
         return base_attributes
 
-    def clip_text_base_attribute_embedding(self):
-        base_dict_pth = os.path.join(self.cfg.output_dir, 'base_attr_embs.pth')
+    def clip_text_base_attribute_embedding(self, output_dir):
+        base_dict_pth = os.path.join(output_dir, 'base_attr_embs.pth')
         if os.path.exists(base_dict_pth):
             self.user_base_embeddings = torch.load(base_dict_pth)
         else:
