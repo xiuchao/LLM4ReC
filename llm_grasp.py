@@ -1,9 +1,10 @@
 import os
 import argparse
 from PIL import Image
+import numpy as np
 import openai
 
-from tools.utils import prompts
+from tools.utils import prompts, read_image_pil
 from tools.GPTReasoning import GPT4Reasoning
 from tools.matching import TargetMatching, ImageCropsBaseAttributesMatching
 from tools.detection import GroundedDetection
@@ -20,12 +21,11 @@ class Engine():
 
     @prompts(name="extract object crops and corresponding base attributes from image",
             description="useful when you try to understand the image content in a structured way")
-    def infer_img_grounded_objects_base_attributes(self, image_path, unique_nouns="stool"):
-        image = Image.open(image_path).convert("RGB") 
-        boxes, pred_phrases = self.detector.inference(image_path, unique_nouns, 
+    def infer_img_grounded_objects_base_attributes(self, image_input, unique_nouns="stool"):
+        image = read_image_pil(image_input)
+        boxes, pred_phrases = self.detector.inference(image, unique_nouns, 
                                                       self.cfg.box_threshold, self.cfg.text_threshold, self.cfg.iou_threshold)
-        masks = self.segmenter.inference(image_path, prompt_boxes=boxes, save_json=False)
-        self.base_matching.clip_text_base_attribute_embedding(self.cfg.output_dir)
+        masks = self.segmenter.inference(image_input, prompt_boxes=boxes, save_json=False)
         objects_base_attributes = self.base_matching.get_objects_base_attributes(image, boxes, pred_phrases, masks) 
         return objects_base_attributes
 
@@ -57,8 +57,8 @@ def chatref_main(cfg):
 
     # matching process
     chatref = TargetMatching(cfg.image_path, cfg.request, crops_base_list, text_subgraph, cfg)
-    targets = chatref.inference()
-    return
+    targets, display_image = chatref.inference()
+    return display_image
 
 
 

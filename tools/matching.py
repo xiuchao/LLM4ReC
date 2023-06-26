@@ -6,14 +6,14 @@ import torch
 import clip
 from tools.GPTReasoning import GPT4Reasoning
 from tools.blip import ImageBLIPCaptioning
-from tools.utils import prompts
+from tools.utils import prompts, read_image_pil
 from tools.plot_utils import draw_candidate_boxes, draw_overlay_caption
 
 
 class TargetMatching:
-    def __init__(self, image_path, request, crops_base_list, text_gpt_dict, cfg):
-        self.rawimage = image_path
-        image_pil = Image.open(image_path).convert("RGB") 
+    def __init__(self, image_input, request, crops_base_list, text_gpt_dict, cfg):
+        image_pil = read_image_pil(image_input)
+        self.rawimage = image_pil
         self.imgsize = image_pil.size
         self.request = request
         self.subgraph = text_gpt_dict
@@ -30,8 +30,8 @@ class TargetMatching:
         
         self.count = len(subgraph_target_list)
         if self.cfg.visualize:
-            draw_candidate_boxes(self.rawimage, self.crops_base_list, self.cfg.output_dir, stepstr='nouns', save=True)
-        return subgraph_target_list
+            image_pil = draw_candidate_boxes(self.rawimage, self.crops_base_list, self.cfg.output_dir, stepstr='nouns', save=True)
+        return subgraph_target_list, image_pil
 
     def match_subgraph_related_base(self, subgraph_target_list):
         assert len(subgraph_target_list) > 1, "No related objects in subgraph!"
@@ -43,22 +43,24 @@ class TargetMatching:
 
         subgraph_target_related_list = [ x for x in subgraph_target_related_list if x != [] ]
         self.count = len(subgraph_target_related_list)
+        image_pil = None
         if self.cfg.visualize:
-            draw_candidate_boxes(self.rawimage, subgraph_target_related_list, self.cfg.output_dir, stepstr='related', save=True)
-        return subgraph_target_related_list
+            image_pil = draw_candidate_boxes(self.rawimage, subgraph_target_related_list, self.cfg.output_dir, stepstr='related', save=True)
+        return subgraph_target_related_list, image_pil
 
     def match_subgraph_reasoning_base(self, subgraph_list, showtitle=False):
         # gpt for disambiguation
         gpt_ref_ids = GPT4Reasoning(temperature=0).extract_disambiguated_target(self.request, subgraph_list, self.imgsize)
         ref_ids = list(map(int, gpt_ref_ids.split(',')))
         gpt_ref_list = [subgraph_list[i] for i in ref_ids]
-
         self.count = len(gpt_ref_list)
+        
+        image_pil = None
         if self.cfg.visualize:
-            draw_candidate_boxes(self.rawimage, gpt_ref_list, self.cfg.output_dir, stepstr='gptref', save=True)
+            image_pil = draw_candidate_boxes(self.rawimage, gpt_ref_list, self.cfg.output_dir, stepstr='gptref', save=True)
             if showtitle:
-                draw_overlay_caption(self.cfg.output_dir, self.request, withcaption=True)
-        return gpt_ref_list
+                image_pil = draw_overlay_caption(self.cfg.output_dir, self.request, withcaption=True)
+        return gpt_ref_list, image_pil
     
     def match_complex_attributes(self,):
         # "add function to match complex attributes"
@@ -77,23 +79,24 @@ class TargetMatching:
              description="useful when you try to extract the target object from the image that align with human request")
     def inference(self):
         # matching sequence
-        subgraph_target_list = self.match_subgraph_target_base()
+        image_pil = None
+        subgraph_target_list, image_pil = self.match_subgraph_target_base()
         if self.count > 1:
-            subgraph_related_list = self.match_subgraph_related_base(subgraph_target_list)
+            subgraph_related_list, image_pil = self.match_subgraph_related_base(subgraph_target_list)
             if self.count > 1:
-                gpt_ref_list = self.match_subgraph_reasoning_base(subgraph_related_list, showtitle=True)
+                gpt_ref_list, image_pil = self.match_subgraph_reasoning_base(subgraph_related_list, showtitle=True)
                 print(f'{self.count} targets found!')
-                return gpt_ref_list
+                return gpt_ref_list, image_pil
             elif self.count == 1:
-                return subgraph_related_list
+                return subgraph_related_list, image_pil
             else:
-                return None
+                return None, None
         elif self.count == 1:
             print('target object found!')
-            return subgraph_target_list
+            return subgraph_target_list, image_pil
         else:
             print('no target object found!')
-            return None
+            return None, None
 
 
 class ImageCropsBaseAttributesMatching:
@@ -102,7 +105,7 @@ class ImageCropsBaseAttributesMatching:
         self.cfg = cfg
         self.model, self.preprocess = clip.load('ViT-B/32', self.cfg.device)
         self.user_base_attributes = self.user_defined_base_attributes()
-        # self.clip_text_base_attribute_embedding()
+        self.clip_text_base_attribute_embedding()
         
     
     def user_defined_base_attributes(self):
@@ -112,8 +115,8 @@ class ImageCropsBaseAttributesMatching:
             'texture': [tuple(['metal', 'wood', 'leather', 'glass', 'plastic', 'ceramic', 'fabric', 'paper']), None], }
         return base_attributes
 
-    def clip_text_base_attribute_embedding(self, output_dir):
-        base_dict_pth = os.path.join(output_dir, 'base_attr_embs.pth')
+    def clip_text_base_attribute_embedding(self):
+        base_dict_pth = os.path.join(self.cfg.output_dir, 'base_attr_embs.pth')
         if os.path.exists(base_dict_pth):
             self.user_base_embeddings = torch.load(base_dict_pth)
         else:

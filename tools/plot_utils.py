@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
+from tools.utils import read_image_pil
 
 
 class PlotUtils:
@@ -51,7 +52,7 @@ class PlotUtils:
 
 def draw_candidate_boxes(image_path, crops_base_list, output_dir, stepstr= 'targets', save=False):
     #assert stepstr in ['candidates', 'self', 'related', 'ref'], "stepstr must be one of ['self', 'related', 'ref']"
-    image_pil = Image.open(image_path).convert("RGB") 
+    image_pil = read_image_pil(image_path)
     H, W = image_pil.size
     boxes =  [k["box"]  for k in crops_base_list]
     labels = [k["name"] for k in crops_base_list]
@@ -94,5 +95,5 @@ def draw_overlay_caption(image_path, request, withcaption=False):
     plt.title(request)
     plt.axis('off')
     plt.savefig(os.path.join(image_path, "gptref_title.jpg"),  bbox_inches="tight", dpi=300, pad_inches=0.0)
-    return True
+    return Image.open(os.path.join(image_path, "gptref_title.jpg"))
 

@@ -46,9 +46,12 @@ class DetPromptedSegmentation:
             json.dump(json_data, f)
         return json_data
 
-    def inference(self, image_path, prompt_boxes, save_json=False):
-        image = cv2.imread(image_path)   #(3024, 4032, 3)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) 
+    def inference(self, image_input, prompt_boxes, save_json=False):
+        if type(image_input) == str:
+            image = cv2.imread(image_input)   #(3024, 4032, 3)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) 
+        else:
+            image = image_input
         self.predictor.set_image(image)
 
         transformed_boxes = self.predictor.transform.apply_boxes_torch(prompt_boxes, image.shape[:2])

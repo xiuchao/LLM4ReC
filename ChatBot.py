@@ -12,6 +12,7 @@ from langchain.llms.openai import OpenAI
 
 from tools.GPTReasoning import GPT4Reasoning
 from llm_grasp import Engine, TargetMatching
+from tools.utils import read_image_pil
 
 
 # gradio bot
@@ -26,26 +27,25 @@ class ConversationBot:
         self.engine = Engine(cfg=cfg)
 
 
-    def __call__(self, chat_hist, image_pil):
+    def __call__(self, chat_hist, image_input):
         request = chat_hist[-1][0]
         self.cfg.request = request
-        image_pil = process_img(image_pil)
-        # unique_nouns = GPT4Reasoning(temperature=0).extract_unique_nouns(request)
+        image_pil = read_image_pil(image_input)
+        unique_nouns = GPT4Reasoning(temperature=0).extract_unique_nouns(request)
         # unique_nouns = 'stool'
-        # crops_base_list = self.engine.infer_img_grounded_objects_base_attributes(image_path, unique_nouns)
-        # # text_subgraph = self.engine.infer_txt_subgraph(request)
+        crops_base_list = self.engine.infer_img_grounded_objects_base_attributes(image_input, unique_nouns)
+        text_subgraph = self.engine.infer_txt_subgraph(request)
         # text_subgraph = {'target': [{'name': 'stool', 'color': 'red'}], 
         #         'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
-        # # matching process
-        # chatref = TargetMatching(self.cfg, crops_base_list, text_subgraph)
-        # targets = chatref.inference()
-        display_image = os.path.join(self.cfg.output_dir, request, "gptref.jpg")
-        if os.path.exists(display_image):
+        # matching process
+        chatref = TargetMatching(image_pil, request, crops_base_list, text_subgraph, cfg)
+        targets, display_image = chatref.inference()
+
+        if display_image is not None:
             follow_up = "Is it the correct object you want?"
             chat_hist[-1][1] = follow_up
-            output_pil = Image.open(display_image).convert("RGB") 
-            return chat_hist, output_pil
-        return chat_hist, image_pil
+            return chat_hist, display_image
+        return chat_hist, image_input
 
 
 def add_text(history, text):
@@ -77,7 +77,7 @@ def launch_chat_bot(cfg):
     with block:
         with gr.Row():
             with gr.Column():
-                input_image = gr.Image(source='upload', type="pil")
+                input_image = gr.Image(source='upload', type="numpy")
                 output_image = gr.outputs.Image(type="pil", label="results")
             with gr.Column():
                 chat_hist = gr.Chatbot([], elem_id="chatbot", label="ChatRef").style(height=500)

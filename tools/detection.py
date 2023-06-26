@@ -23,9 +23,8 @@ class GroundedDetection:
                             T.ToTensor(),
                             T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
-    def inference(self, image_path, caption, box_threshold, text_threshold, iou_threshold):
+    def inference(self, image_pil, caption, box_threshold, text_threshold, iou_threshold):
         # input: image, caption
-        image_pil = Image.open(image_path).convert("RGB")  # load image
         image, _ = self.processor(image_pil, None) 
         image = image.to(self.cfg.device)
 
