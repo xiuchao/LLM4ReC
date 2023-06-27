@@ -30,8 +30,8 @@ class TargetMatching:
         
         self.count = len(subgraph_target_list)
         if self.cfg.visualize:
-            image_pil = draw_candidate_boxes(self.rawimage, self.crops_base_list, self.cfg.output_dir, stepstr='nouns', save=True)
-        return subgraph_target_list, image_pil
+            draw_candidate_boxes(self.rawimage, self.crops_base_list, self.cfg.output_dir, stepstr='nouns', save=True)
+        return subgraph_target_list
 
     def match_subgraph_related_base(self, subgraph_target_list):
         assert len(subgraph_target_list) > 1, "No related objects in subgraph!"
@@ -43,10 +43,10 @@ class TargetMatching:
 
         subgraph_target_related_list = [ x for x in subgraph_target_related_list if x != [] ]
         self.count = len(subgraph_target_related_list)
-        image_pil = None
+        
         if self.cfg.visualize:
-            image_pil = draw_candidate_boxes(self.rawimage, subgraph_target_related_list, self.cfg.output_dir, stepstr='related', save=True)
-        return subgraph_target_related_list, image_pil
+            draw_candidate_boxes(self.rawimage, subgraph_target_related_list, self.cfg.output_dir, stepstr='related', save=True)
+        return subgraph_target_related_list
 
     def match_subgraph_reasoning_base(self, subgraph_list, showtitle=False):
         # gpt for disambiguation
@@ -55,12 +55,11 @@ class TargetMatching:
         gpt_ref_list = [subgraph_list[i] for i in ref_ids]
         self.count = len(gpt_ref_list)
         
-        image_pil = None
         if self.cfg.visualize:
-            image_pil = draw_candidate_boxes(self.rawimage, gpt_ref_list, self.cfg.output_dir, stepstr='gptref', save=True)
+            draw_candidate_boxes(self.rawimage, gpt_ref_list, self.cfg.output_dir, stepstr='gptref', save=True)
             if showtitle:
-                image_pil = draw_overlay_caption(self.cfg.output_dir, self.request, withcaption=True)
-        return gpt_ref_list, image_pil
+                draw_overlay_caption(self.cfg.output_dir, self.request, withcaption=True)
+        return gpt_ref_list
     
     def match_complex_attributes(self,):
         # "add function to match complex attributes"
@@ -79,24 +78,23 @@ class TargetMatching:
              description="useful when you try to extract the target object from the image that align with human request")
     def inference(self):
         # matching sequence
-        image_pil = None
-        subgraph_target_list, image_pil = self.match_subgraph_target_base()
+        subgraph_target_list = self.match_subgraph_target_base()
         if self.count > 1:
-            subgraph_related_list, image_pil = self.match_subgraph_related_base(subgraph_target_list)
+            subgraph_related_list = self.match_subgraph_related_base(subgraph_target_list)
             if self.count > 1:
-                gpt_ref_list, image_pil = self.match_subgraph_reasoning_base(subgraph_related_list, showtitle=True)
+                gpt_ref_list = self.match_subgraph_reasoning_base(subgraph_related_list, showtitle=True)
                 print(f'{self.count} targets found!')
-                return gpt_ref_list, image_pil
+                return gpt_ref_list
             elif self.count == 1:
-                return subgraph_related_list, image_pil
+                return subgraph_related_list
             else:
-                return None, None
+                return None
         elif self.count == 1:
             print('target object found!')
-            return subgraph_target_list, image_pil
+            return subgraph_target_list
         else:
             print('no target object found!')
-            return None, None
+            return None
 
 
 class ImageCropsBaseAttributesMatching:
