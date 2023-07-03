@@ -77,6 +77,7 @@ class ConversationBot:
             elif len(subgraph_related_list) == 1:
                 display_image = draw_candidate_boxes(rawimage_pil, subgraph_related_list, self.cfg.output_dir, stepstr='gptref', save=True)
                 chat_hist[-1][1] = "Target found!"
+                self.update_chat_history(chat_hist[-1][1], role="AI")
                 return chat_hist, display_image
             else:
                 return chat_hist, rawimage_pil
@@ -84,6 +85,7 @@ class ConversationBot:
             print('target object found!')
             display_image = draw_candidate_boxes(rawimage_pil, subgraph_target_list, self.cfg.output_dir, stepstr='gptref', save=True)
             chat_hist[-1][1] = "Target found!"
+            self.update_chat_history(chat_hist[-1][1], role="AI")
             return chat_hist, display_image
         else:
             print('no target object found!')
