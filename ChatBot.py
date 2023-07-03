@@ -8,7 +8,7 @@ import openai
 from llm_grasp import Engine, TargetMatching
 from tools.utils import read_image_pil
 from tools.prompt import gen_extract_target_prompt, gen_extract_target_relation_prompt, \
-                        gen_extract_disambiguated_target_prompt
+                        gen_extract_disambiguated_target_prompt, extract_disambiguated_target_prompt
 from tools.plot_utils import draw_candidate_boxes
 from tools.GPTReferring import GPTReferring
 
@@ -19,53 +19,75 @@ class ConversationBot:
         print(f"Initializing ChatRef")
         self.llm = GPTReferring()
         self.engine = Engine(cfg=cfg)
+        self.chat_hist_buffer = []
+        self.window_memory_size = 10
+
+    def update_chat_history(self, chat: str, role: str): # role: User, AI
+        if len(self.chat_hist_buffer) >= self.window_memory_size:
+            self.chat_hist_buffer.pop(0)
+        this_chat = f"{role}: {chat}"
+        self.chat_hist_buffer.append(this_chat)
+        print(f"Chat history buffer size {len(self.chat_hist_buffer)}")
+
+
+    def chat_hist_to_string(self,):
+        output = ""
+        for sentence in self.chat_hist_buffer:
+            output = output + sentence + "\n"
+        return output
 
 
     def __call__(self, chat_hist, image_input):
         rawimage_pil = read_image_pil(image_input)
-        request = chat_hist[-1][0]
-        extract_target_prompt = gen_extract_target_prompt(request)
-        target_nouns = self.llm.get_completion(extract_target_prompt)
-        target_nouns = eval(target_nouns)
-        if target_nouns["has_target"] == False:
-            chat_hist[-1][1] = target_nouns["ask_user"]
-            return chat_hist, None
-        unique_nouns = target_nouns["target"][0]
-        # unique_nouns = 'stool'
-        crops_base_list = self.engine.infer_img_grounded_objects_base_attributes(image_input, unique_nouns)
+        self.update_chat_history(chat_hist[-1][0], role="Human")
+        request = self.chat_hist_to_string()
+
         extract_target_graph_prompt = gen_extract_target_relation_prompt(request)
-        text_subgraph = self.llm.get_completion(extract_target_graph_prompt)
+        text_subgraph = self.llm.get_completion(extract_target_graph_prompt, max_tokens=500, use_memory=False)
         text_subgraph = eval(text_subgraph)
-        # text_subgraph = {'target': [{'name': 'stool', 'color': 'red'}], 
-        #         'related': [{'spatial': 'on the left of', 'target': '0', 'name': 'stool', 'color': 'yellow'}]}
-        if text_subgraph["target"] == []:
-            chat_hist[-1][1] = target_nouns["ask_user"]
-            return chat_hist, None
+        if text_subgraph["has_target"] == False or text_subgraph["ask_user"]!="":
+            chat_hist[-1][1] = text_subgraph["ask_user"]
+            self.update_chat_history(chat_hist[-1][1], role="AI")
+            return chat_hist, rawimage_pil
+        if type(text_subgraph["target"]) == list:
+            unique_nouns = text_subgraph["target"][0]["name"]
+        elif type(text_subgraph["target"]) == dict:
+            unique_nouns = text_subgraph["target"]["name"]
+        else: # str
+            unique_nouns = text_subgraph["target"]
+        crops_base_list = self.engine.infer_img_grounded_objects_base_attributes(image_input, unique_nouns)
+        
         # matching process
         chatref = TargetMatching(image_input, request, crops_base_list, text_subgraph, cfg)
         subgraph_target_list = chatref.match_subgraph_target_base()
         if chatref.count > 1:
             subgraph_related_list = chatref.match_subgraph_related_base(subgraph_target_list)
             if len(subgraph_related_list) > 1:
-                extract_disambiguated_target_prompt = gen_extract_disambiguated_target_prompt(request)
-                gpt_ref = self.llm.get_completion(extract_disambiguated_target_prompt)
-                ref_ids = list(map(int, gpt_ref.split(',')))
+                disambiguated_target_prompt = gen_extract_disambiguated_target_prompt(request, rawimage_pil.size, subgraph_related_list)
+                gpt_ref = self.llm.get_completion(disambiguated_target_prompt, max_tokens=1000, use_memory=False)
+                gpt_ref = eval(gpt_ref)
+                ref_ids = gpt_ref["result"]
+                assert type(ref_ids)==list, "type error, expect list"
                 gpt_ref_list = [subgraph_related_list[i] for i in ref_ids]
                 print(f'{len(gpt_ref_list)} targets found!')
                 display_image = draw_candidate_boxes(rawimage_pil, gpt_ref_list, self.cfg.output_dir, stepstr='gptref', save=True)
+                chat_hist[-1][1] = gpt_ref["explain"]
+                self.update_chat_history(chat_hist[-1][1], role="AI")
                 return chat_hist, display_image
             elif len(subgraph_related_list) == 1:
                 display_image = draw_candidate_boxes(rawimage_pil, subgraph_related_list, self.cfg.output_dir, stepstr='gptref', save=True)
+                chat_hist[-1][1] = "Target found!"
                 return chat_hist, display_image
             else:
-                return chat_hist, None
+                return chat_hist, rawimage_pil
         elif chatref.count == 1:
             print('target object found!')
             display_image = draw_candidate_boxes(rawimage_pil, subgraph_target_list, self.cfg.output_dir, stepstr='gptref', save=True)
+            chat_hist[-1][1] = "Target found!"
             return chat_hist, display_image
         else:
             print('no target object found!')
-            return chat_hist, None
+            return chat_hist, rawimage_pil
 
 
 def add_text(history, text):
@@ -112,9 +134,8 @@ def launch_chat_bot(cfg):
         )
         txt_msg.then(lambda: gr.update(interactive=True), None, [txt], queue=False)
         clear.click(lambda: [], None, chat_hist)
-        clear.click(lambda: [], None, output_image)
 
-    block.launch(server_name="0.0.0.0", server_port=7992, debug=True)
+    block.launch(server_name="0.0.0.0", server_port=7993, debug=True)
 
 
 if __name__ == "__main__":

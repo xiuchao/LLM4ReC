@@ -9,37 +9,53 @@ class GPTReferring:
         self.message = [{'role': 'user', 'content': ''}]
         self.memory = []
         self.window_memory_size = window_memory_size
+        self.chat_hist = []
 
 
-    def get_completion(self, prompt, model="gpt-3.5-turbo", max_token=200, temperature=0):
+    def get_completion(self, prompt, model="gpt-3.5-turbo", 
+                       max_tokens=200, temperature=0, 
+                       use_memory=True):
         messages = [{"role": "user", "content": prompt}]
+        self.update_window_memory(messages)
+        if use_memory:
+            input_prompt = self.memory
+        else:
+            input_prompt = messages
         response = openai.ChatCompletion.create(
             model=model,
-            messages=messages,
-            max_token=max_token,
+            messages=input_prompt,
+            max_tokens=max_tokens,
             temperature=temperature # this is the degree of randomness of the model's output
         )
-        self.update_window_memory(messages)
-        self.update_window_memory(response.choices[0].message)
+        ai_message = [{"role": "assistant", "content": response.choices[0].message["content"]}]
+        # ai_chat = "AI: " + response.choices[0].message["content"]
+        self.update_window_memory(ai_message)
         return response.choices[0].message["content"]
     
 
-    def get_completion_messages(self, messages, model="gpt-3.5-turbo", max_token=200, temperature=0):
+    def get_completion_messages(self, messages, model="gpt-3.5-turbo", 
+                                max_tokens=200, temperature=0,
+                                use_memory=True):
+        self.update_window_memory(messages)
+        if use_memory:
+            input_prompt = self.memory
+        else:
+            input_prompt = messages
+        
         response = openai.ChatCompletion.create(
             model=model,
-            messages=messages,
-            max_token=max_token,
+            messages=input_prompt,
+            max_tokens=max_tokens,
             temperature=temperature,
         )
-        self.update_window_memory(messages)
-        self.update_window_memory(response.choices[0].message)
+        ai_message = [{"role": "assistant", "content": response.choices[0].message["content"]}]
+        self.update_window_memory(ai_message)
         return response.choices[0].message["content"]
 
 
-    def update_window_memory(self, message):
+    def update_window_memory(self, message: list):
         if len(self.memory) >= self.window_memory_size:
             self.memory.pop(0)
-        self.memory.append(message)
+        self.memory.extend(message)
         return
-
 

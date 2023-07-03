@@ -161,7 +161,12 @@ class ImageCropsBaseAttributesMatching:
                             'shape':['', None], 
                             'texture':['',None]} 
             # detect crops 
-            name_, score_ = re.match(r'(\w+)\((.*?)\)', pred_phrases[i]).groups()
+            try:
+                name_, score_ = re.match(r'(\w+)\((.*?)\)', pred_phrases[i]).groups()
+            except:
+                curr_phrase = pred_phrases[i].replace('(', '')
+                curr_phrase = curr_phrase.replace(')', '')
+                name_, score_ = curr_phrase[:-4], curr_phrase[-4:]
             base_attributes ['name'] = [name_, float(score_)]
             base_attributes ['box'] = pos = [int(x) for x in boxes.numpy()[i,].tolist()]
             base_attributes ['width']  = pos[2] - pos[0]
