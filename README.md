@@ -25,7 +25,5 @@ wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 python ChatBot.py
 ```
 
-<details open>
-<img src=".assets/v1-stool.PNG" alt="ODinW" width="100%">
-</details>
+![UI](assets/v1-stool.PNG)
 
