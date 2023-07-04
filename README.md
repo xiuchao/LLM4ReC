@@ -24,6 +24,6 @@ wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 ```
 python ChatBot.py
 ```
-
-![UI](assets/v1-stool.PNG)
+<!-- ![UI](assets/v1-stool.PNG) -->
+<image src="assets/v1-stool.PNG" alt="UI example">
 
