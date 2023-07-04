@@ -67,7 +67,9 @@ class ConversationBot:
                 gpt_ref = self.llm.get_completion(disambiguated_target_prompt, max_tokens=1000, use_memory=False)
                 gpt_ref = eval(gpt_ref)
                 ref_ids = gpt_ref["result"]
-                assert type(ref_ids)==list, "type error, expect list"
+                if type(ref_ids) == int:
+                    ref_ids = [ref_ids]
+                assert type(ref_ids)==list, "type error, expect list/int"
                 gpt_ref_list = [subgraph_related_list[i] for i in ref_ids]
                 print(f'{len(gpt_ref_list)} targets found!')
                 display_image = draw_candidate_boxes(rawimage_pil, gpt_ref_list, self.cfg.output_dir, stepstr='gptref', save=True)
