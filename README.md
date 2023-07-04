@@ -1,9 +1,11 @@
 # Language Models can do Zero-Shot Visual Referring Expression Comprehension
 
 ## Install
-> conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-> pip install -r requirements.txt
-> pip install git+https://github.com/openai/CLIP.git
+```
+conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+pip install -r requirements.txt
+pip install git+https://github.com/openai/CLIP.git
+```
 
 ## Setup 
 - OpenAI API key
@@ -18,7 +20,12 @@ wget https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alp
 wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 ```
 
-## Get start
+## Demo
 ```
 python ChatBot.py
 ```
+
+<details open>
+<img src=".assets/v1-stool.PNG" alt="ODinW" width="100%">
+</details>
+
