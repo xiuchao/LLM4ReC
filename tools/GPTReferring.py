@@ -3,13 +3,14 @@ import openai
 
 
 class GPTReferring: 
-    def __init__(self, window_memory_size=10, delimiter="###"):
+    def __init__(self, window_memory_size=10, delimiter="###", logger=None):
         self.llms = ["gpt-3.5-turbo", "gpt-4"]
         self.delimiter = delimiter
         self.message = [{'role': 'user', 'content': ''}]
         self.memory = []
         self.window_memory_size = window_memory_size
         self.chat_hist = []
+        self.logger = logger
 
 
     def get_completion(self, prompt, model="gpt-3.5-turbo", 
@@ -30,6 +31,9 @@ class GPTReferring:
         ai_message = [{"role": "assistant", "content": response.choices[0].message["content"]}]
         # ai_chat = "AI: " + response.choices[0].message["content"]
         self.update_window_memory(ai_message)
+        # logging
+        self.logger.info("prompt:\n{}".format(prompt))
+        self.logger.info("response:\n{}".format(response.choices[0].message["content"]))
         return response.choices[0].message["content"]
     
 
@@ -50,6 +54,9 @@ class GPTReferring:
         )
         ai_message = [{"role": "assistant", "content": response.choices[0].message["content"]}]
         self.update_window_memory(ai_message)
+        # logging
+        self.logger.info("prompt:\n{}".format(messages["content"]))
+        self.logger.info("response:\n{}".format(response.choices[0].message["content"]))
         return response.choices[0].message["content"]
 
 

@@ -10,14 +10,15 @@ from tools.utils import read_image_pil
 from tools.prompt import gen_extract_target_prompt, gen_extract_target_relation_prompt, \
                         gen_extract_disambiguated_target_prompt, extract_disambiguated_target_prompt
 from tools.plot_utils import draw_candidate_boxes
+from tools.logger import setup_logger
 from tools.GPTReferring import GPTReferring
 
 # gradio bot
 class ConversationBot:
-    def __init__(self, cfg):
+    def __init__(self, cfg, logger):
         self.cfg = cfg
         print(f"Initializing ChatRef")
-        self.llm = GPTReferring()
+        self.llm = GPTReferring(logger=logger)
         self.engine = Engine(cfg=cfg)
         self.chat_hist_buffer = []
         self.window_memory_size = 10
@@ -112,8 +113,8 @@ def process_img(image_pil: Image.Image):
     return image_pil
 
 
-def launch_chat_bot(cfg):
-    bot = ConversationBot(cfg)
+def launch_chat_bot(cfg, logger):
+    bot = ConversationBot(cfg, logger=logger)
     block = gr.Blocks().queue()
     with block:
         with gr.Row():
@@ -160,4 +161,7 @@ if __name__ == "__main__":
     _ = load_dotenv(find_dotenv()) # read local .env file
     openai.api_key = os.environ['OPENAI_API_KEY']
 
-    launch_chat_bot(cfg)
+    # logging
+    logger = setup_logger("chatref", cfg.output_dir, 0)
+
+    launch_chat_bot(cfg, logger)
