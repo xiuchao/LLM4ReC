@@ -184,20 +184,16 @@ Therefore, the target object is the red stool with index 1.
     return extract_disambiguated_target
 
 
-def extract_disambiguated_target_prompt(text_subgraph, image_size, crops_attributes_list, delimiter="###"):
-    extract_disambiguated_target = f"""
-    Locate the target object(s) according to image size, relation graph of objects and other information.
-    Image size: {image_size}. \
-    Relation graph: {text_subgraph}. \
-    Candidate objects: {crops_attributes_list}.
-    You must do the following steps: \
-    1 - align objects in relation graph with candidate objects. \
-    2 - locate the target(s) from 'Condidate objects' list.
-    Output only the order index, like 0, 1, 2...
+def gen_rephrase_semantic_question_prompt(request, chat_hist):
+    prompt = f"""
+    Given the following conversation and a follow up question, rephrase the follow up question \
+    to be a standalone question.
+    Chat History: {chat_hist}
+    Follow Up Input: {request}
+    Standalone question:
     """
-    extract_disambiguated_target = remove_whitespace(extract_disambiguated_target)
-    return extract_disambiguated_target
-
+    prompt = remove_whitespace(prompt)
+    return prompt
 
 
 # prompt = {

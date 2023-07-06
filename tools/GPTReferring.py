@@ -3,13 +3,10 @@ import openai
 
 
 class GPTReferring: 
-    def __init__(self, window_memory_size=10, delimiter="###", logger=None):
+    def __init__(self, window_memory_size=10, logger=None):
         self.llms = ["gpt-3.5-turbo", "gpt-4"]
-        self.delimiter = delimiter
-        self.message = [{'role': 'user', 'content': ''}]
         self.memory = []
         self.window_memory_size = window_memory_size
-        self.chat_hist = []
         self.logger = logger
 
 
