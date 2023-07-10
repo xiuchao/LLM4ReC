@@ -7,8 +7,8 @@ import gradio as gr
 import openai
 from llm_grasp import Engine, TargetMatching
 from tools.utils import read_image_pil
-from tools.prompt import gen_extract_target_prompt, gen_extract_target_relation_prompt, \
-                        gen_extract_disambiguated_target_prompt, extract_disambiguated_target_prompt
+from tools.prompt import gen_extract_target_relation_prompt, \
+                        gen_extract_disambiguated_target_prompt
 from tools.plot_utils import draw_candidate_boxes
 from tools.logger import setup_logger
 from tools.GPTReferring import GPTReferring
