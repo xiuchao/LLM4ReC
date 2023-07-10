@@ -6,8 +6,8 @@ from PIL import Image
 import gradio as gr
 import openai
 from llm_grasp import Engine, TargetMatching
-from tools.utils import read_image_pil
-from tools.prompt import gen_extract_target_relation_prompt, \
+from tools.utils import read_image_pil, extract_dict_from_str
+from tools.prompt import gen_rephrase_semantic_question_prompt, gen_extract_target_relation_prompt, \
                         gen_extract_disambiguated_target_prompt
 from tools.plot_utils import draw_candidate_boxes
 from tools.logger import setup_logger
@@ -40,10 +40,17 @@ class ConversationBot:
 
     def __call__(self, chat_hist, image_input):
         rawimage_pil = read_image_pil(image_input)
+        request = chat_hist[-1][0]
+        history_str = self.chat_hist_to_string()
         self.update_chat_history(chat_hist[-1][0], role="Human")
-        request = self.chat_hist_to_string()
 
-        extract_target_graph_prompt = gen_extract_target_relation_prompt(request)
+        if history_str == "":
+            rephrase_question = request
+        else:
+            question_prompt = gen_rephrase_semantic_question_prompt(request, history_str)
+            rephrase_question = self.llm.get_completion(question_prompt, max_tokens=500, use_memory=False)
+
+        extract_target_graph_prompt = gen_extract_target_relation_prompt(rephrase_question)
         text_subgraph = self.llm.get_completion(extract_target_graph_prompt, max_tokens=500, use_memory=False)
         text_subgraph = eval(text_subgraph)
         if text_subgraph["has_target"] == False or text_subgraph["ask_user"]!="":
@@ -64,13 +71,22 @@ class ConversationBot:
         if chatref.count > 1:
             subgraph_related_list = chatref.match_subgraph_related_base(subgraph_target_list)
             if len(subgraph_related_list) > 1:
-                disambiguated_target_prompt = gen_extract_disambiguated_target_prompt(request, rawimage_pil.size, subgraph_related_list)
-                gpt_ref = self.llm.get_completion(disambiguated_target_prompt, max_tokens=1000, use_memory=False)
-                gpt_ref = eval(gpt_ref)
+                disambiguated_target_prompt = gen_extract_disambiguated_target_prompt(rephrase_question, rawimage_pil.size, subgraph_related_list)
+                gpt_ref_str = self.llm.get_completion(disambiguated_target_prompt, max_tokens=1000, use_memory=False)
+                gpt_ref = extract_dict_from_str(gpt_ref_str)
+                
+                if type(gpt_ref) == str:
+                    chat_hist[-1][1] = gpt_ref
+                    self.update_chat_history(chat_hist[-1][1], role="AI")
+                    return chat_hist, rawimage_pil
                 ref_ids = gpt_ref["result"]
                 if type(ref_ids) == int:
                     ref_ids = [ref_ids]
                 assert type(ref_ids)==list, "type error, expect list/int"
+                if max(ref_ids) >= len(subgraph_related_list):
+                    chat_hist[-1][1] = gpt_ref["explain"]
+                    self.update_chat_history(chat_hist[-1][1], role="AI")
+                    return chat_hist, rawimage_pil
                 gpt_ref_list = [subgraph_related_list[i] for i in ref_ids]
                 print(f'{len(gpt_ref_list)} targets found!')
                 display_image = draw_candidate_boxes(rawimage_pil, gpt_ref_list, self.cfg.output_dir, stepstr='gptref', save=True)

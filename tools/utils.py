@@ -19,3 +19,16 @@ def read_image_pil(image_input) -> Image.Image:
     else: # Image.Image
         image = image_input
     return image
+
+
+def extract_dict_from_str(input: str):
+    if "{" in input and "}" in input:
+        start = input.index("{")
+        end = input.index("}")
+        out = input[start:end+1]
+        out = eval(out)
+    else:
+        out = input
+    return out
+
+
