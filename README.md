@@ -27,3 +27,14 @@ python ChatBot.py
 <!-- ![UI](assets/v1-stool.PNG) -->
 <image src="assets/v1-stool.PNG" alt="UI example">
 
+
+## Citation
+```
+@misc{
+sui2023language,
+title={Language Models can do Zero-Shot Visual Referring Expression Comprehension},
+author={Xiuchao Sui and Shaohua Li and Hong Yang and Hongyuan Zhu and Yan Wu},
+year={2023},
+url={https://openreview.net/forum?id=F7mdgA7c2zD}
+}
+```
